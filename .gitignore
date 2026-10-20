@@ -1,0 +1,18 @@
+# 의존성
+node_modules/
+
+# 환경·비밀 설정 (예시 파일은 추적)
+.env
+.env.*
+!.env.example
+
+# 로그·런타임 임시 파일
+*.log
+npm-debug.log*
+tmp/
+.cache/
+
+# OS·편집기 부산물
+.DS_Store
+Thumbs.db
+desktop.ini
