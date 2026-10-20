@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>숨바꼭질 — 모의 입력 프로토타입</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./main.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <main class="stage-area">
+      <div class="stage" id="stage" data-phase="hidden-idle">
+        <div class="layer layer-bg" aria-hidden="true">
+          <div class="snowfall"></div>
+          <div class="tree tree-1"></div>
+          <div class="tree tree-2"></div>
+          <div class="tree tree-3"></div>
+          <div class="tree tree-4"></div>
+          <div class="tree tree-5"></div>
+          <div class="hill-back"></div>
+        </div>
+
+        <div class="layer layer-character" aria-hidden="true">
+          <div class="figure" id="figure" data-pose="hidden">
+            <div class="figure-body">
+              <span class="ear ear-l"></span>
+              <span class="ear ear-r"></span>
+              <span class="torso"></span>
+              <span class="head">
+                <span class="eye eye-l"></span>
+                <span class="eye eye-r"></span>
+                <span class="cheek cheek-l"></span>
+                <span class="cheek cheek-r"></span>
+                <span class="nose"></span>
+              </span>
+              <span class="scarf"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer layer-fg" aria-hidden="true">
+          <div class="bush bush-l"></div>
+          <div class="bush bush-r"></div>
+          <div class="hill-front"></div>
+        </div>
+
+        <p class="stage-badge">모의 입력 · 임시 연출 · 더미 캐릭터(최종 아트 아님)</p>
+        <p class="stage-phase" id="stage-phase" aria-live="polite">숨은 대기</p>
+      </div>
+    </main>
+
+    <aside class="panel">
+      <section class="controls" aria-labelledby="controls-title">
+        <h2 id="controls-title">모의 입력 조작 <small>개발용</small></h2>
+
+        <div class="field">
+          <label for="distance">관객 거리 <output id="distance-value" for="distance">-</output></label>
+          <input type="range" id="distance">
+          <p class="hint" id="threshold-hint">사이는 이전 판정 유지 (임시값)</p>
+          <div class="buttons">
+            <button type="button" data-action="near">가까이 (N)</button>
+            <button type="button" data-action="far">멀리 (F)</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <p class="field-title">입력 상태: <strong id="input-mode">-</strong></p>
+          <div class="buttons">
+            <button type="button" data-action="no-target">감지 없음</button>
+            <button type="button" data-action="error">입력 오류</button>
+            <button type="button" data-action="stop">전송 중단</button>
+            <button type="button" data-action="resume" class="primary">정상 입력 재개</button>
+          </div>
+          <p class="hint">감지 없음·입력 오류 중에는 거리 값을 보내지 않습니다. 전송 중단은 샘플을 완전히 끊습니다.</p>
+        </div>
+
+        <p class="hint">단축키: N 가까이 · F 멀리 · D 진단 표시 전환</p>
+      </section>
+
+      <details class="diagnostics" id="diagnostics" open>
+        <summary>진단 (D)</summary>
+        <dl id="diag-list"></dl>
+      </details>
+    </aside>
+  </div>
+</body>
+</html>

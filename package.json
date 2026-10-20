@@ -1,0 +1,14 @@
+{
+  "name": "shinsegae-hideseek",
+  "version": "0.1.0",
+  "private": true,
+  "description": "mmWave 근접 숨바꼭질 웹 체험 — 1단계 모의 입력 프로토타입",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node --test"
+  }
+}
