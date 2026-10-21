@@ -7,6 +7,7 @@ export const PHASE_LABELS = Object.freeze({
   duck: '숨기',
   hidden: '숨음',
   return: '놀이로 복귀',
+  rehide: '다시 숨기(복귀 역방향)',
 });
 
 const DECISION_LABELS = { unknown: '알 수 없음', far: '원거리', mid: '중간', near: '근거리' };
@@ -72,7 +73,8 @@ function formatTransition(player, r) {
   const origin = t.prevEndedMs ?? t.requestMs;
   const parts = [
     `#${t.playId} ${t.fromClip ?? '-'} → ${t.clip}${t.forced ? '(거리 강제)' : ''}`
-      + ` · 섞기 ${t.blended ? `${t.blendMs} ms` : '없음'}${t.endedBy ? ` · 끝남(${t.endedBy})` : ''}`,
+      + ` · 섞기 ${t.blended ? `${t.blendMs} ms` : '없음'}${t.endedBy ? ` · 끝남(${t.endedBy})` : ''}`
+      + (t.mirror ? ` · 정/역 반전 시작 ${t.mirror}` : ''),
     `끝→첫 그림 ${drawnMs === null ? '-' : Math.round(drawnMs - origin)} ms${t.prevEndedMs === null ? '(요청 기준)' : ''}`,
     `끝→요청 ${t.prevEndedMs === null ? '-' : Math.round(t.requestMs - t.prevEndedMs)}`,
     `준비 ${rel(t.readyMs)}${t.seeked ? '(탐색)' : ''}${t.waitedRewind ? '(되감기 대기)' : ''}`,
@@ -126,7 +128,7 @@ export function createDiagnostics(listEl, { note = '' } = {}) {
     const flags = [];
     if (seq.noticed) flags.push('관객 인지');
     if (seq.suspended) flags.push(`일시 중지(${suspendedBy.join(', ') || '-'})`);
-    if (seq.clueAtMs !== null) flags.push(`숨은 대기 · 단서(SC3)까지 ${Math.max(0, (seq.clueAtMs - nowMs) / 1000).toFixed(1)} s`);
+    if (seq.phase === 'hidden' && seq.playId === null) flags.push('숨은 대기(자동 재생 없음 · 멀어지면 복귀)');
     if (seq.switchAtMs !== null) {
       flags.push(`전환 예약 · ${Math.max(0, (seq.switchAtMs - nowMs) / 1000).toFixed(1)} s 안에 끝나지 않으면 강제(판정 ${DECISION_LABELS[seq.decision]})`);
     } else if (seq.lastSwitch) {

@@ -20,7 +20,11 @@
 //     그 뒤 지금 쓰지 않는 영상(표시 중·재생 중·렌더러가 아직 쓰는 요소 — 섞는 중인 이전 영상 포함 — 제외)을 미리 inSec으로
 //     되감아 다음 재생 때 탐색 대기를 없앤다. 처음 불러온 영상도 메타데이터가 오면 inSec으로 미리 감는다.
 //     미리 되감는 중에 그 영상이 재생 차례가 되면 탐색이 끝나기를 기다린 뒤 시작한다(다시 탐색하지 않음).
-//     표시 중인 영상은 건드리지 않는다 — 같은 영상을 다시 재생할 때만(예: 숨은 대기 뒤 SC3) 재생 시작 때 탐색한다.
+//     표시 중인 영상은 건드리지 않는다 — 같은 영상을 다시 재생할 때만(예: 취소 뒤 같은 클립) 재생 시작 때 탐색한다.
+//   - 정/역 짝(clips[].mirrorOf, 복귀 SC4 ↔ 역방향 SC4R): play의 mirror면 시작 지점을 **요청 순간 실제로 보이는 프레임**(display)에서
+//     정한다 — 보이는 것이 짝 영상이면 프레임 대응 지점(mirrorStartSec), 같은 영상이면 그 프레임, 둘 다 아니면(아직 짝이 화면에
+//     나오기 전) 모두 숨은 자세의 시각(hiddenSec). 요청됐지만 아직 준비 중인 영상은 보이는 것이 아니므로 기준으로 쓰지 않는다.
+//     새 영상이 그 지점에서 재생을 시작할 때까지 이전 프레임을 유지한다(섞지 않음).
 //   - 진단: 최근 전환마다 이전 클립 끝 → 재생 요청 → 준비(탐색) → 재생 시작(표시 교체) → 첫 영상 프레임 시각을 남긴다.
 
 const HAVE_METADATA = 1;
@@ -34,6 +38,19 @@ export function editRange(def) {
   const inSec = Number.isFinite(def.inSec) && def.inSec > 0 ? def.inSec : 0;
   const outSec = Number.isFinite(def.outSec) && def.outSec > inSec ? def.outSec : null;
   return { inSec, outSec };
+}
+
+// 프레임 번호(그 시각에 보이는 프레임 = 시작 PTS가 그 시각 이하인 마지막 프레임). 부동소수 오차로 앞 프레임이 되지 않게 아주 작은 여유.
+function frameAt(sec, fps, frames) {
+  return Math.min(frames - 1, Math.max(0, Math.floor(sec * fps + 1e-6)));
+}
+// 프레임 가운데 시각(탐색이 그 프레임에 확실히 떨어지게).
+const frameMidSec = (index, fps) => (index + 0.5) / fps;
+
+// 정/역 짝의 대응 시작 시각: 한쪽에서 fromSec에 보이는 프레임 i ↔ 다른 쪽 프레임 (frames − 1 − i). 프레임 가운데 시각을 돌려준다.
+// (duration − t가 아니라 프레임 번호로 대응시킨다 — 마지막 PTS는 길이보다 한 프레임 짧다.)
+export function mirrorStartSec(fromSec, frames, fps) {
+  return frameMidSec(frames - 1 - frameAt(fromSec, fps, frames), fps);
 }
 
 function mediaErrorText(video) {
@@ -59,7 +76,12 @@ export function createSeqPlayer({
   // 클립 이름 → { clip, url, inSec, outSec, video, loads, rewinds, lastError }
   const entries = {};
   for (const [clip, def] of Object.entries(clips)) {
-    if (def.file) entries[clip] = { clip, url: `${seqBase}${def.file}`, ...editRange(def), video: null, loads: 0, rewinds: 0, lastError: null };
+    if (!def.file) continue;
+    entries[clip] = {
+      clip, url: `${seqBase}${def.file}`, ...editRange(def),
+      mirror: def.mirrorOf ? { of: def.mirrorOf, frames: def.frames, fps: def.fps, hiddenSec: def.hiddenSec } : null,
+      video: null, loads: 0, rewinds: 0, lastError: null,
+    };
   }
 
   let current = null; // 진행 중 재생 토큰 { playId, clip, video, stage, startedMs, listeners }
@@ -251,11 +273,12 @@ export function createSeqPlayer({
       if (video.seeking) m.waitedRewind = true;
       await waitUntil(video, ['loadeddata', 'seeked', 'canplay'], () => video.readyState >= HAVE_CURRENT_DATA && !video.seeking);
       if (!isCurrent(token)) return;
-      if (!atIn(video, entry)) {
+      const startSec = token.startSec ?? entry.inSec; // 정/역 반전이면 요청 때 정한 대응 지점, 아니면 편집 시작점
+      if (video.ended || Math.abs(video.currentTime - startSec) > POS_EPS_SEC) {
         token.stage = 'seeking';
         m.seeked = true;
         video.pause();
-        video.currentTime = entry.inSec; // 여기서 seeking이 켜지고 seeked 때 꺼진다
+        video.currentTime = startSec; // 여기서 seeking이 켜지고 seeked 때 꺼진다
         await waitUntil(video, ['seeked'], () => !video.seeking);
         if (!isCurrent(token)) return;
       }
@@ -313,10 +336,33 @@ export function createSeqPlayer({
     finish(token, outcome);
   }
 
+  // 정/역 짝의 시작 시각을 지금 실제로 보이는 프레임(display)으로 정한다. 편집 구간 안(끝 한 프레임 전까지)으로 자른다.
+  function mirrorStart(entry) {
+    const { of, frames, fps, hiddenSec } = entry.mirror;
+    const shown = display?.kind === 'video' ? display : null;
+    let sec;
+    let from;
+    if (shown && shown.clip === of) {
+      sec = mirrorStartSec(shown.element.currentTime, frames, fps); // 짝 영상의 보이는 프레임 → 대응 프레임
+      from = `${of}@${shown.element.currentTime.toFixed(3)}`;
+    } else if (shown && shown.clip === entry.clip) {
+      sec = frameMidSec(frameAt(shown.element.currentTime, fps, frames), fps); // 같은 영상이 보이는 중(짝이 아직 화면에 안 나옴) → 그 자리부터
+      from = `${entry.clip}@${shown.element.currentTime.toFixed(3)}`;
+    } else {
+      sec = hiddenSec ?? entry.inSec; // 짝이 화면에 나오기 전: 보이는 것은 숨은 자세
+      from = 'hidden';
+    }
+    const hi = (entry.outSec ?? (frames - 1) / fps) - 1 / fps;
+    return { sec: Math.min(Math.max(sec, entry.inSec), hi), from };
+  }
+
   return {
     // 새 클립 재생. 진행 중 재생은 교체(취소)된다. blendMs > 0이면 지금 보이는 (다른) 영상과 짧게 섞는다(forced = 거리로 도중에 바꿈, 진단용).
-    play({ playId, clip, blendMs = 0, forced = false }) {
+    // mirror면 정/역 짝의 대응 지점부터 시작한다(시작 지점은 취소·되감기 전에, 지금 보이는 프레임으로 정함).
+    play({ playId, clip, blendMs = 0, forced = false, mirror = false }) {
       if (disposed) return;
+      const mirrorEntry = mirror && entries[clip]?.mirror ? entries[clip] : null;
+      const start = mirrorEntry ? mirrorStart(mirrorEntry) : null;
       // 섞을 이전 화면: 지금 보이는 영상(취소되면 그 프레임에서 멈춤). H 이미지·가림 화면에서는 섞지 않는다.
       const blendFrom = blendMs > 0 && display?.kind === 'video' ? display.element : null;
       stopCurrent('replaced');
@@ -336,12 +382,16 @@ export function createSeqPlayer({
         firstFrameMediaSec: null,
         blendMs,
         forced,
+        mirror: start ? `${start.from} → ${start.sec.toFixed(3)} s` : null,
         blended: false,
         endedBy: null,
       };
       transitions.push(metrics);
       if (transitions.length > TRANSITION_LOG) transitions.shift();
-      const token = { playId, clip, video: null, stage: 'pending', startedMs, listeners: [], metrics, blendFrom, blendMs, outTimer: null };
+      const token = {
+        playId, clip, video: null, stage: 'pending', startedMs, listeners: [], metrics, blendFrom, blendMs, outTimer: null,
+        startSec: start ? start.sec : null,
+      };
       current = token;
       run(token);
     },

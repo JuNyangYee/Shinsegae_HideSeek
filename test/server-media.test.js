@@ -128,7 +128,7 @@ test('기본 미디어 폴더는 실행 cwd와 무관하게 저장소 public/dis
   }
 });
 
-test('기본 핸들러(환경 변수 없음, 다른 cwd)로 저장소 에셋 8개가 HEAD 200, 영상 Range는 206으로 원본 바이트', async () => {
+test('기본 핸들러(환경 변수 없음, 다른 cwd)로 저장소 에셋 9개(영상 원본 7·SC4 역방향 파생 1·정지 이미지 1)가 HEAD 200, 영상 Range는 206으로 원본 바이트', async () => {
   const cwd = process.cwd();
   const saved = { SEQ_DIR: process.env.SEQ_DIR, POSE_DIR: process.env.POSE_DIR };
   let listener;

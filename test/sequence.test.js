@@ -28,9 +28,10 @@ function startPlaying(director, t = 0) {
 }
 
 test('편집 구간 길이: 재생 지시의 durationMs와 timeout은 원본이 아니라 inSec~outSec 길이를 쓴다', () => {
-  assert.equal(clipPlayMs(CFG.clips.SC0A_Pat), 6750);
-  assert.equal(clipPlayMs(CFG.clips.SC2_Duck), 2000);
-  assert.equal(clipPlayMs(CFG.clips.SC3_Hidden_Clue), CFG.clips.SC3_Hidden_Clue.durationMs); // 편집 없음 = 원본 전체
+  assert.equal(clipPlayMs(CFG.clips.SC0A_Pat), 7000);
+  assert.equal(clipPlayMs(CFG.clips.SC0C_Playful), 7750); // 처음(0초)부터
+  assert.equal(clipPlayMs(CFG.clips.SC2_Duck), 3500); // 놀라는 예비 동작(0초)부터
+  assert.equal(CFG.clips.SC3_Hidden_Clue, undefined); // 너구리 빼꼼(SC3)은 실행 클립이 아님
   const director = createSequenceDirector(CFG);
   const [ret] = plays(director.setDecision('far', 0));
   assert.equal(ret.durationMs, 5500);
@@ -110,7 +111,7 @@ test('예약 중 판정이 되돌아오면 취소하고, 바뀐 목표는 하나
   assert.deepEqual(clipsOf(director.tick(13800)), ['SC1_Notice']);
 });
 
-test('눈치챔 중 far, 복귀 중 near는 예약 뒤 강제 전환, 복귀 중 mid·far는 예약하지 않는다', () => {
+test('눈치챔 중 far는 예약 뒤 강제 전환, 복귀 중 mid·far는 예약하지 않는다', () => {
   const director = createSequenceDirector(CFG);
   const play = startPlaying(director, 0);
   director.setDecision('mid', 6000);
@@ -122,16 +123,67 @@ test('눈치챔 중 far, 복귀 중 near는 예약 뒤 강제 전환, 복귀 중
   assert.equal(toPlay[0].playId, notice.playId);
   assert.deepEqual([toPlay[1].phase, toPlay[1].forced], ['play', true]);
 
-  // 복귀 중 near → 0.8초 뒤 숨기, 복귀 중 mid는 예약 없음
+  // 복귀 중 mid → far는 같은 나오는 방향이라 예약·반전 없음
   const r = createSequenceDirector(CFG);
-  const [ret] = plays(r.setDecision('mid', 0));
+  plays(r.setDecision('mid', 0));
   assert.deepEqual(r.setDecision('far', 1000), []);
   assert.equal(r.snapshot().switchAtMs, null);
-  r.setDecision('near', 2000);
-  const toDuck = r.tick(2800);
-  assert.deepEqual(types(toDuck), ['cancel', 'play']);
-  assert.equal(toDuck[0].playId, ret.playId);
-  assert.deepEqual([toDuck[1].clip, toDuck[1].forced], ['SC2_Duck', true]);
+});
+
+test('복귀 정/역 반전: 복귀 중 near는 예약 없이 바로 역방향(섞기 0, 대응 지점), 역방향 중 mid·far는 바로 정방향', () => {
+  const director = createSequenceDirector(CFG);
+  const [ret] = plays(director.setDecision('far', 0));
+  const toRehide = director.setDecision('near', 2000);
+  assert.deepEqual(types(toRehide), ['cancel', 'play']);
+  assert.equal(toRehide[0].playId, ret.playId);
+  const rehide = toRehide[1];
+  assert.deepEqual([rehide.clip, rehide.phase, rehide.mirror, rehide.blendMs], ['SC4R_Rehide', 'rehide', true, 0]);
+  assert.equal(rehide.durationMs, 5500); // 역방향 구간 1.0~6.5초 전체(남은 구간의 상한)
+  assert.deepEqual([director.snapshot().switchAtMs, director.snapshot().noticed], [null, true]);
+  assert.deepEqual(director.tick(3000), []); // 같은 방향 near 유지 중에는 그대로
+
+  const toReturn = director.setDecision('far', 3500);
+  assert.deepEqual(types(toReturn), ['cancel', 'play']);
+  assert.equal(toReturn[0].playId, rehide.playId);
+  assert.deepEqual([toReturn[1].clip, toReturn[1].phase, toReturn[1].mirror, toReturn[1].blendMs], ['SC4_Return_To_Play', 'return', true, 0]);
+  assert.deepEqual(director.playbackFinished(rehide.playId, 3600), []); // 반전으로 취소된 재생의 늦은 완료는 무시
+
+  // 다시 near → 역방향, 끝까지 가면 클립 없는 숨은 대기
+  const [rehide2] = plays(director.setDecision('near', 4000));
+  assert.equal(rehide2.clip, 'SC4R_Rehide');
+  assert.deepEqual(director.playbackFinished(rehide2.playId, 6000), []);
+  const snap = director.snapshot();
+  assert.deepEqual([snap.phase, snap.playId], ['hidden', null]);
+
+  // 숨은 끝에서 mid → 일반 복귀(편집 시작점, 대응 지점 아님)
+  const [again] = plays(director.setDecision('mid', 7000));
+  assert.deepEqual([again.clip, again.mirror], ['SC4_Return_To_Play', false]);
+  // 다 나와 놀이가 된 뒤의 near는 기존대로 SC2 숨기(예약)
+  const [play] = plays(director.playbackFinished(again.playId, 12000));
+  director.setDecision('near', 12500);
+  assert.equal(play.phase, 'play');
+  assert.deepEqual(clipsOf(director.tick(13300)), ['SC2_Duck']);
+});
+
+test('역방향 중 unknown·오류는 즉시 H 안전 정지, 역방향이 mid로 끝나면 일반 복귀', () => {
+  const director = createSequenceDirector(CFG);
+  plays(director.setDecision('far', 0));
+  const [rehide] = plays(director.setDecision('near', 1000));
+  assert.deepEqual(director.setDecision('unknown', 1500), [{ type: 'cancel', playId: rehide.playId }, { type: 'pose', pose: 'hidden' }]);
+
+  const d2 = createSequenceDirector(CFG);
+  plays(d2.setDecision('far', 0));
+  const [r2] = plays(d2.setDecision('near', 1000));
+  const failed = d2.playbackFailed(r2.playId, 'media-error-4', 1200); // 역방향 파일 누락·손상: SC2로 대신하지 않음
+  assert.deepEqual(failed, [{ type: 'cancel', playId: r2.playId }, { type: 'pose', pose: 'hidden' }]);
+  assert.equal(d2.snapshot().phase, 'safe');
+
+  const d3 = createSequenceDirector(CFG);
+  plays(d3.setDecision('far', 0));
+  const [r3] = plays(d3.setDecision('near', 1000));
+  d3.setDecision('mid', 1400); // 바로 정방향으로 반전
+  assert.equal(d3.snapshot().phase, 'return');
+  assert.notEqual(d3.snapshot().playId, r3.playId);
 });
 
 test('숨기(SC2) 중 멀어져도 예약하지 않고 숨는 동작을 마친 뒤 복귀한다', () => {
@@ -147,51 +199,32 @@ test('숨기(SC2) 중 멀어져도 예약하지 않고 숨는 동작을 마친 �
   assert.deepEqual([ret.clip, ret.forced], ['SC4_Return_To_Play', false]);
 });
 
-test('숨은 대기 → 랜덤 대기 뒤 SC3 1회(섞지 않음) → 새 랜덤 대기, 대기 중 mid는 바로 복귀', () => {
-  const draws = [0, 0.5];
-  let calls = 0;
-  const director = createSequenceDirector(CFG, { random: () => draws[calls++] });
-  const { minMs, maxMs } = CFG.hiddenClueDelayMs;
+test('숨은 대기는 자동 재생 없이 오래 지나도 그대로이고(너구리 빼꼼 없음), mid·far가 되면 바로 복귀한다', () => {
+  const director = createSequenceDirector(CFG);
   director.setDecision('near', 0); // 시작 near → 숨은 대기부터
-  let snap = director.snapshot();
-  assert.deepEqual([snap.phase, snap.playId, snap.clueAtMs, snap.noticed], ['hidden', null, minMs, true]);
-  assert.deepEqual(director.tick(minMs - 1), []); // 대기 중 tick은 다시 추첨하지 않는다
-  assert.equal(calls, 1);
+  const snap = director.snapshot();
+  assert.deepEqual([snap.phase, snap.playId, snap.noticed], ['hidden', null, true]);
+  for (const t of [8000, 16000, 60000, 600000]) assert.deepEqual(director.tick(t), []); // 시간이 많이 지나도 클립 없음
+  assert.deepEqual(director.setDecision('near', 600100), []);
+  assert.deepEqual([director.snapshot().phase, director.snapshot().playId], ['hidden', null]);
 
-  const [clue] = plays(director.tick(minMs));
-  assert.deepEqual([clue.clip, clue.blendMs], ['SC3_Hidden_Clue', 0]);
-  const t1 = minMs + 4100;
-  assert.deepEqual(director.playbackFinished(clue.playId, t1), []);
-  assert.equal(director.snapshot().clueAtMs, t1 + Math.round(minMs + 0.5 * (maxMs - minMs)));
-  assert.equal(calls, 2);
-
-  const back = director.setDecision('mid', t1 + 1000);
+  const back = director.setDecision('mid', 601000);
   assert.deepEqual(types(back), ['play']); // 끊을 클립이 없으니 바로
-  assert.equal(back[0].clip, 'SC4_Return_To_Play');
-  assert.equal(director.snapshot().clueAtMs, null);
-  assert.deepEqual(clipsOf(director.playbackFinished(back[0].playId, t1 + 6000)), [CFG.midIdleCycle[0]]); // 눈치챔 없이 중간 대기
+  assert.deepEqual([back[0].clip, back[0].mirror], ['SC4_Return_To_Play', false]);
+  assert.deepEqual(clipsOf(director.playbackFinished(back[0].playId, 606000)), [CFG.midIdleCycle[0]]); // 눈치챔 없이 중간 대기
+
+  // 숨기(SC2)가 끝나도 숨은 대기 → far면 복귀
+  const d2 = createSequenceDirector(CFG);
+  const play = startPlaying(d2, 0);
+  d2.setDecision('near', 6000);
+  const [duck] = plays(d2.playbackFinished(play.playId, 6500));
+  assert.deepEqual(d2.playbackFinished(duck.playId, 10000), []);
+  assert.deepEqual(d2.tick(100000), []);
+  assert.deepEqual(clipsOf(d2.setDecision('far', 100100)), ['SC4_Return_To_Play']);
 });
 
-test('단서(SC3) 중 멀어지면 0.8초 뒤 강제로 복귀하고, 그 전에 끝나면 자연스럽게 복귀한다', () => {
-  const director = createSequenceDirector(CFG, { random: () => 0 });
-  const { minMs } = CFG.hiddenClueDelayMs;
-  director.setDecision('near', 0);
-  const [clue] = plays(director.tick(minMs));
-  director.setDecision('far', minMs + 1000);
-  const forced = director.tick(minMs + 1800);
-  assert.deepEqual(types(forced), ['cancel', 'play']);
-  assert.equal(forced[0].playId, clue.playId);
-  assert.deepEqual([forced[1].clip, forced[1].forced, forced[1].blendMs], ['SC4_Return_To_Play', true, 200]);
-
-  const d2 = createSequenceDirector(CFG, { random: () => 0 });
-  d2.setDecision('near', 0);
-  const [clue2] = plays(d2.tick(minMs));
-  d2.setDecision('mid', minMs + 3600);
-  assert.deepEqual(clipsOf(d2.playbackFinished(clue2.playId, minMs + 4042)), ['SC4_Return_To_Play']);
-});
-
-test('unknown은 즉시 취소·H 안전 정지·예약 취소, 늦은 완료는 무시, 회복 near는 숨은 대기, 대기 중 unknown은 단서 예약 취소', () => {
-  const director = createSequenceDirector(CFG, { random: () => 0 });
+test('unknown은 즉시 취소·H 안전 정지·예약 취소, 늦은 완료는 무시, 회복 near는 숨은 대기, 대기 중 unknown은 안전 정지', () => {
+  const director = createSequenceDirector(CFG);
   const play = startPlaying(director, 0);
   director.setDecision('near', 6000); // 전환 예약 중
   const stop = director.setDecision('unknown', 6300);
@@ -202,10 +235,10 @@ test('unknown은 즉시 취소·H 안전 정지·예약 취소, 늦은 완료는
   assert.equal(director.snapshot().ignoredCompletions, 1);
 
   assert.deepEqual(director.setDecision('near', 8000), []); // 숨은 대기부터
-  assert.deepEqual([director.snapshot().phase, director.snapshot().clueAtMs], ['hidden', 8000 + CFG.hiddenClueDelayMs.minMs]);
+  assert.deepEqual([director.snapshot().phase, director.snapshot().playId], ['hidden', null]);
   assert.deepEqual(director.setDecision('unknown', 9000), [{ type: 'pose', pose: 'hidden' }]);
-  assert.deepEqual([director.snapshot().phase, director.snapshot().clueAtMs], ['safe', null]);
-  assert.deepEqual(director.tick(8000 + CFG.hiddenClueDelayMs.minMs + 1), []);
+  assert.equal(director.snapshot().phase, 'safe');
+  assert.deepEqual(director.tick(30000), []);
 });
 
 test('재생 timeout·재생기 오류는 안전 정지 후 재시도, retryNow, 일시 중지는 예약을 취소하고 재생하지 않는다', () => {
@@ -218,14 +251,15 @@ test('재생 timeout·재생기 오류는 안전 정지 후 재시도, retryNow,
   const [retry] = plays(director.retryNow(5300)); // H에서 다시 시작하므로 복귀부터
   assert.equal(retry.clip, 'SC4_Return_To_Play');
 
-  director.setDecision('near', 5400); // 복귀 중 near → 예약
+  const [play2] = plays(director.playbackFinished(retry.playId, 5350)); // 복귀 완료 → 놀이
+  assert.equal(play2.phase, 'play');
+  director.setDecision('near', 5400); // 놀이 중 near → 예약
   assert.notEqual(director.snapshot().switchAtMs, null);
   assert.deepEqual(types(director.setSuspended(true, 5500)), ['cancel', 'pose']);
   assert.equal(director.snapshot().switchAtMs, null);
   assert.deepEqual(director.tick(6500), []);
-  assert.deepEqual(director.setSuspended(false, 6600), []); // 풀리면 near → 숨은 대기(단서 예약)
+  assert.deepEqual(director.setSuspended(false, 6600), []); // 풀리면 near → 숨은 대기
   assert.equal(director.snapshot().phase, 'hidden');
-  assert.notEqual(director.snapshot().clueAtMs, null);
-  assert.deepEqual(types(director.setSuspended(true, 6700)), ['pose']); // 다시 멈추면 단서 예약 취소
-  assert.equal(director.snapshot().clueAtMs, null);
+  assert.deepEqual(types(director.setSuspended(true, 6700)), ['pose']); // 다시 멈추면 안전 정지
+  assert.equal(director.snapshot().phase, 'safe');
 });

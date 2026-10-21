@@ -3,23 +3,36 @@
 //       임시값 = 모의 입력 확인용으로 정한 값(노이즈 여유·유지 시간·timeout 등). 실제 센서·현장에서 다시 정한다.
 //       ThrowSnow 운영값 = 참고 프로젝트 RENDER_STYLE.post.oilStroke(HEAD 1fa49de)와 같은 값.
 
-// 영상 클립 표. file = /media/seq/ 아래 파일(서버 allowlist server/media.js와 같아야 한다), durationMs = 원본 영상 길이(ms, 24fps).
+// 실행 영상 클립 표(재생하는 것만). file = /media/seq/ 아래 파일(서버 allowlist server/media.js에 있어야 한다), durationMs = 원본 영상 길이(ms, 24fps).
 // inSec·outSec = 재생 편집 구간(초, 원본 기준). 원본 파일은 그대로 두고 재생할 때 이 구간만 쓴다(null이면 처음 / 원본 끝).
-//   임시 편집값(2026-10-21, 오케스트레이터가 원본 프레임과 경계 프레임 쌍(앞 클립 out → 다음 in)을 보고 정함 — 자동 정지 검출 결과 아님):
-//   IDLE 경계마다 겹치던 약 0.8~1.55초의 자세 유지(호흡)를 줄이되 다음 클립과 머리 방향이 맞는 지점에서 자르고,
-//   눈치챔·숨기·복귀의 앞뒤 대기를 줄인다. 남는 손·머리의 미세한 차이는 naturalBlendMs로 섞는다.
-//   숨기(SC2)는 1.5초까지 서 있는 예비 동작을 빼고 2~3.5초의 숨는 동작을 보존한다. SC3은 원본 전체.
+//   임시 편집값(2026-10-21, 오케스트레이터가 원본 0.5초 간격 프레임과 경계 프레임 쌍을 보고 정함 — 자동 정지 검출 결과 아님).
+//   사용자 지적(앞부분이 뚝 끊김, 처음 숨을 때 놀람이 없음)에 따라 **초반이 많이 겹칠 때만** 앞을 덜어낸다:
+//   SC0A는 초기 짧은 자세 대기만(0.25초), SC0B는 동작이 커지기 전 대기만(0.5초) 덜고 말미 머리 자세 복귀(8.0초)까지 보존해
+//   SC0C 0초로 잇는다. SC0C·SC2는 처음부터(0초) — SC0C 초반 손·머리 움직임, SC2 머리 들고 놀라는 예비 동작 보존.
+//   SC1은 0~1.5초 놀이 기본 자세를 덜고 본격 눈치챔부터. 남는 손·머리의 미세한 차이는 naturalBlendMs로 섞는다.
+// SC3_Hidden_Clue(너구리 빼꼼)는 사용자 요청(2026-10-21)으로 재생하지 않는다 — 원본 파일은 저장소·서버 allowlist에 미사용 자료로 남지만
+// 이 표에 없으므로 불러오지도 재생하지도 않는다.
 // 실제 재생 길이(timeout 계산) = outSec − inSec(core/sequence.js clipPlayMs). 완료는 실제 영상 시각이 outSec에 닿았을 때(또는 ended)만 판단한다.
 // SC1b_Glance(중간 거리 곁눈질)는 아직 영상이 없다(file null). 생기면 file·durationMs를 채우고 server/media.js allowlist에 추가한다.
+// 정/역방향 짝(mirrorOf·frames·fps): SC4와 그 역순 파생 영상(SC4R, 사용자 요청 2026-10-21 — 복귀 도중 다시 다가오면 같은 자세에서 되돌아 숨기).
+//   SC4R 프레임 j = SC4 원본 프레임 (frames − 1 − j). 둘 다 169프레임, 24fps, 마지막 프레임 PTS 7.0초(길이 7.041667초와 1프레임 차이).
+//   SC4 재생 구간 0.50~6.00초(프레임 12~144)에 대응하는 SC4R 구간은 1.00~6.50초(프레임 24~156). SC4R의 끝(6.5초)이 모두 숨은 자세다.
+//   짝 사이 전환은 지금 보이는 프레임의 대응 지점부터 시작한다(scene/seq-player.js mirrorStartSec). hiddenSec = 모두 숨은 자세의 시각
+//   (짝 영상이 아직 화면에 나오기 전에 반전하면 보이는 것은 숨은 자세이므로 여기서 시작).
 const CLIPS = Object.freeze({
-  SC0A_Pat: Object.freeze({ file: 'SC0A_Pat.mp4', durationMs: 8042, inSec: 0.5, outSec: 7.25, title: '눈사람 다듬기' }),
-  SC0B_Roll: Object.freeze({ file: 'SC0B_Roll.mp4', durationMs: 8042, inSec: 0.75, outSec: 7.5, title: '작은 눈덩이 굴리기' }),
-  SC0C_Playful: Object.freeze({ file: 'SC0C_Playful.mp4', durationMs: 8042, inSec: 0.75, outSec: 7.75, title: '눈 털며 장난치기' }),
+  SC0A_Pat: Object.freeze({ file: 'SC0A_Pat.mp4', durationMs: 8042, inSec: 0.25, outSec: 7.25, title: '눈사람 다듬기' }),
+  SC0B_Roll: Object.freeze({ file: 'SC0B_Roll.mp4', durationMs: 8042, inSec: 0.5, outSec: 8.0, title: '작은 눈덩이 굴리기' }),
+  SC0C_Playful: Object.freeze({ file: 'SC0C_Playful.mp4', durationMs: 8042, inSec: 0, outSec: 7.75, title: '눈 털며 장난치기' }),
   SC1_Notice: Object.freeze({ file: 'SC1_Notice.mp4', durationMs: 8042, inSec: 1.5, outSec: 6.75, title: '놀다가 눈치챔' }),
   SC1b_Glance: Object.freeze({ file: null, durationMs: 8000, inSec: null, outSec: null, title: '놀며 곁눈질(영상 없음)' }),
-  SC2_Duck: Object.freeze({ file: 'SC2_Duck.mp4', durationMs: 4042, inSec: 1.5, outSec: 3.5, title: '그 자리에서 숨기' }),
-  SC3_Hidden_Clue: Object.freeze({ file: 'SC3_Hidden_Clue.mp4', durationMs: 4042, inSec: null, outSec: null, title: '숨은 채 작은 단서' }),
-  SC4_Return_To_Play: Object.freeze({ file: 'SC4_Return_To_Play.mp4', durationMs: 7042, inSec: 0.5, outSec: 6.0, title: '나와서 놀이 재개' }),
+  SC2_Duck: Object.freeze({ file: 'SC2_Duck.mp4', durationMs: 4042, inSec: 0, outSec: 3.5, title: '놀라서 그 자리에서 숨기' }),
+  SC4_Return_To_Play: Object.freeze({
+    file: 'SC4_Return_To_Play.mp4', durationMs: 7042, inSec: 0.5, outSec: 6.0, mirrorOf: 'SC4R_Rehide', frames: 169, fps: 24, hiddenSec: 0.5, title: '나와서 놀이 재개',
+  }),
+  SC4R_Rehide: Object.freeze({
+    file: 'SC4_Return_To_Play_Reverse.mp4', durationMs: 7042, inSec: 1.0, outSec: 6.5, mirrorOf: 'SC4_Return_To_Play', frames: 169, fps: 24, hiddenSec: 6.5,
+    title: '복귀 역방향(다시 숨기)',
+  }),
 });
 
 const PLAY_CYCLE = Object.freeze(['SC0A_Pat', 'SC0B_Roll', 'SC0C_Playful']);
@@ -44,11 +57,9 @@ export const SETTINGS = Object.freeze({
     midIdleCycle: MID_IDLE_CYCLE, // 중간 거리에서 눈치챈 뒤 대기
     noticeClip: 'SC1_Notice',
     duckClip: 'SC2_Duck',
-    hiddenClip: 'SC3_Hidden_Clue',
     returnClip: 'SC4_Return_To_Play',
-    // 임시값: 숨은 대기 중 SC3(숨은 단서)를 1회 재생하기까지의 랜덤 대기(ms). 숨은 대기에 들어갈 때마다 이 범위에서 한 번 추첨한다.
-    hiddenClueDelayMs: Object.freeze({ minMs: 8000, maxMs: 16000 }),
-    // 임시값: 끊을 수 있는 클립(놀이·눈치챔·복귀·단서) 중 다른 클립이 필요한 판정이 오면 이 시간(ms) 안에 끝나지 않을 때 강제 전환한다.
+    rehideClip: 'SC4R_Rehide', // 복귀 도중 near: 지금 자세에서 거꾸로 숨기(SC4 역방향 파생 영상)
+    // 임시값: 끊을 수 있는 클립(놀이·눈치챔) 중 다른 클립이 필요한 판정이 오면 이 시간(ms) 안에 끝나지 않을 때 강제 전환한다.
     switchWithinMs: 800,
     // 임시값: 다른 영상으로 넘어갈 때 이전 화면(멈춘 마지막 프레임)과 새 영상을 섞는 시간(ms, 유화 앞에서 섞음).
     // 새 영상은 섞는 동안에도 재생된다(정지 시간 추가 없음). 안전 정지(H)·H 이미지에서 시작·같은 영상 재시작은 섞지 않는다.

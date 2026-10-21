@@ -25,8 +25,11 @@ const ALLOWLIST = Object.freeze({
   '/media/seq/SC0C_Playful.mp4': { root: 'seq', file: 'SC0C_Playful.mp4' },
   '/media/seq/SC1_Notice.mp4': { root: 'seq', file: 'SC1_Notice.mp4' },
   '/media/seq/SC2_Duck.mp4': { root: 'seq', file: 'SC2_Duck.mp4' },
+  // SC3(너구리 빼꼼)는 사용자 요청(2026-10-21)으로 재생하지 않는다. 원본 보존용으로 주소만 남긴다(표시 페이지는 요청하지 않음).
   '/media/seq/SC3_Hidden_Clue.mp4': { root: 'seq', file: 'SC3_Hidden_Clue.mp4' },
   '/media/seq/SC4_Return_To_Play.mp4': { root: 'seq', file: 'SC4_Return_To_Play.mp4' },
+  // SC4 원본 프레임을 역순으로 인코딩한 파생 영상(복귀 도중 다시 숨기). 원본 7개와 함께 SEQ_DIR에 있어야 한다.
+  '/media/seq/SC4_Return_To_Play_Reverse.mp4': { root: 'seq', file: 'SC4_Return_To_Play_Reverse.mp4' },
   '/media/pose/H_Hidden.png': { root: 'pose', file: 'H_Hidden.png' },
 });
 
