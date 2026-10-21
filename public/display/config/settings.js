@@ -3,18 +3,23 @@
 //       임시값 = 모의 입력 확인용으로 정한 값(노이즈 여유·유지 시간·timeout 등). 실제 센서·현장에서 다시 정한다.
 //       ThrowSnow 운영값 = 참고 프로젝트 RENDER_STYLE.post.oilStroke(HEAD 1fa49de)와 같은 값.
 
-// 영상 클립 표. file = /media/seq/ 아래 파일(서버 allowlist server/media.js와 같아야 한다), durationMs = 실제 영상 길이(ms, 24fps).
-// durationMs는 **재생 timeout 계산에만** 쓴다(완료는 실제 ended 이벤트로만 판단).
+// 영상 클립 표. file = /media/seq/ 아래 파일(서버 allowlist server/media.js와 같아야 한다), durationMs = 원본 영상 길이(ms, 24fps).
+// inSec·outSec = 재생 편집 구간(초, 원본 기준). 원본 파일은 그대로 두고 재생할 때 이 구간만 쓴다(null이면 처음 / 원본 끝).
+//   임시 편집값(2026-10-21, 오케스트레이터가 원본 프레임과 경계 프레임 쌍(앞 클립 out → 다음 in)을 보고 정함 — 자동 정지 검출 결과 아님):
+//   IDLE 경계마다 겹치던 약 0.8~1.55초의 자세 유지(호흡)를 줄이되 다음 클립과 머리 방향이 맞는 지점에서 자르고,
+//   눈치챔·숨기·복귀의 앞뒤 대기를 줄인다. 남는 손·머리의 미세한 차이는 naturalBlendMs로 섞는다.
+//   숨기(SC2)는 1.5초까지 서 있는 예비 동작을 빼고 2~3.5초의 숨는 동작을 보존한다. SC3은 원본 전체.
+// 실제 재생 길이(timeout 계산) = outSec − inSec(core/sequence.js clipPlayMs). 완료는 실제 영상 시각이 outSec에 닿았을 때(또는 ended)만 판단한다.
 // SC1b_Glance(중간 거리 곁눈질)는 아직 영상이 없다(file null). 생기면 file·durationMs를 채우고 server/media.js allowlist에 추가한다.
 const CLIPS = Object.freeze({
-  SC0A_Pat: Object.freeze({ file: 'SC0A_Pat.mp4', durationMs: 8042, title: '눈사람 다듬기' }),
-  SC0B_Roll: Object.freeze({ file: 'SC0B_Roll.mp4', durationMs: 8042, title: '작은 눈덩이 굴리기' }),
-  SC0C_Playful: Object.freeze({ file: 'SC0C_Playful.mp4', durationMs: 8042, title: '눈 털며 장난치기' }),
-  SC1_Notice: Object.freeze({ file: 'SC1_Notice.mp4', durationMs: 8042, title: '놀다가 눈치챔' }),
-  SC1b_Glance: Object.freeze({ file: null, durationMs: 8000, title: '놀며 곁눈질(영상 없음)' }),
-  SC2_Duck: Object.freeze({ file: 'SC2_Duck.mp4', durationMs: 4042, title: '그 자리에서 숨기' }),
-  SC3_Hidden_Clue: Object.freeze({ file: 'SC3_Hidden_Clue.mp4', durationMs: 4042, title: '숨은 채 작은 단서' }),
-  SC4_Return_To_Play: Object.freeze({ file: 'SC4_Return_To_Play.mp4', durationMs: 7042, title: '나와서 놀이 재개' }),
+  SC0A_Pat: Object.freeze({ file: 'SC0A_Pat.mp4', durationMs: 8042, inSec: 0.5, outSec: 7.25, title: '눈사람 다듬기' }),
+  SC0B_Roll: Object.freeze({ file: 'SC0B_Roll.mp4', durationMs: 8042, inSec: 0.75, outSec: 7.5, title: '작은 눈덩이 굴리기' }),
+  SC0C_Playful: Object.freeze({ file: 'SC0C_Playful.mp4', durationMs: 8042, inSec: 0.75, outSec: 7.75, title: '눈 털며 장난치기' }),
+  SC1_Notice: Object.freeze({ file: 'SC1_Notice.mp4', durationMs: 8042, inSec: 1.5, outSec: 6.75, title: '놀다가 눈치챔' }),
+  SC1b_Glance: Object.freeze({ file: null, durationMs: 8000, inSec: null, outSec: null, title: '놀며 곁눈질(영상 없음)' }),
+  SC2_Duck: Object.freeze({ file: 'SC2_Duck.mp4', durationMs: 4042, inSec: 1.5, outSec: 3.5, title: '그 자리에서 숨기' }),
+  SC3_Hidden_Clue: Object.freeze({ file: 'SC3_Hidden_Clue.mp4', durationMs: 4042, inSec: null, outSec: null, title: '숨은 채 작은 단서' }),
+  SC4_Return_To_Play: Object.freeze({ file: 'SC4_Return_To_Play.mp4', durationMs: 7042, inSec: 0.5, outSec: 6.0, title: '나와서 놀이 재개' }),
 });
 
 const PLAY_CYCLE = Object.freeze(['SC0A_Pat', 'SC0B_Roll', 'SC0C_Playful']);
@@ -43,7 +48,13 @@ export const SETTINGS = Object.freeze({
     returnClip: 'SC4_Return_To_Play',
     // 임시값: 숨은 대기 중 SC3(숨은 단서)를 1회 재생하기까지의 랜덤 대기(ms). 숨은 대기에 들어갈 때마다 이 범위에서 한 번 추첨한다.
     hiddenClueDelayMs: Object.freeze({ minMs: 8000, maxMs: 16000 }),
-    playTimeoutMarginMs: 4000, // 임시값: 클립 길이 + 이 여유(불러오기·탐색 포함) 안에 ended가 없으면 재생 오류(timeout)
+    // 임시값: 끊을 수 있는 클립(놀이·눈치챔·복귀·단서) 중 다른 클립이 필요한 판정이 오면 이 시간(ms) 안에 끝나지 않을 때 강제 전환한다.
+    switchWithinMs: 800,
+    // 임시값: 다른 영상으로 넘어갈 때 이전 화면(멈춘 마지막 프레임)과 새 영상을 섞는 시간(ms, 유화 앞에서 섞음).
+    // 새 영상은 섞는 동안에도 재생된다(정지 시간 추가 없음). 안전 정지(H)·H 이미지에서 시작·같은 영상 재시작은 섞지 않는다.
+    naturalBlendMs: 150, // 클립이 끝나 다음 클립으로 이어질 때(IDLE 경계 등)
+    forcedBlendMs: 200, // 거리 때문에 진행 중 클립을 도중에 바꿀 때
+    playTimeoutMarginMs: 4000, // 임시값: 편집 구간 길이 + 이 여유(불러오기·탐색 포함) 안에 완료가 없으면 재생 오류(timeout)
     playbackRetryDelayMs: 3000, // 임시값: 재생 오류 후 이만큼(ms) 안전 정지한 뒤 다시 판단
   }),
   media: Object.freeze({

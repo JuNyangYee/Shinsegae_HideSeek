@@ -7,6 +7,10 @@
 //   - 그리기 경로: 후처리(반정밀 → 8비트)와 직접 그리기를 운영 그리기 함수를 그대로 불러 GL 오류로 시험한다(probe).
 //   - 그리기 박자: renderFps(12)로 그린다(필터의 「초당 그림」). 영상은 실제 시간 24fps 1배속으로 재생되고 그림만 12fps로 표본한다.
 //     표시 요소가 바뀌면 재생기가 refresh()로 알려 다음 화면 갱신을 기다리지 않고 바로 한 장 그린다.
+//   - 전환 섞기: 재생기가 display에 blendFrom(지금 그리던 이전 영상)·blendMs를 실으면, 같은 크기의 영상끼리만 그 시간 동안
+//     장면 셰이더에서 이전 프레임 → 새 영상으로 섞는다(유화 후처리 앞 — 필터는 섞인 장면에 그대로 적용). 섞는 동안 이전 요소는
+//     usesElement()가 참이라 재생기가 되감지 않고, 끝나면 정리한다. H 이미지·가림 화면으로 바꿀 때는 섞지 않고 바로 덮는다.
+//     박자(renderFps)는 그대로라 섞기는 그 사이 그려지는 그림 수만큼만 보인다.
 // 실패 정책:
 //   - 유화를 켰는데 후처리를 쓸 수 없거나(시험 실패) 실행 중 실패(예외·첫 획 층 칠함 확인 실패)하면 **원본(직접 그리기)으로 바꾸고 오류를 보인다**.
 //     O로 끄고 다시 켜면 새로 시험한다(복구).
@@ -23,12 +27,15 @@ void main() {
 }`;
 const FRAGMENT = /* glsl */ `
 uniform sampler2D map;
+uniform sampler2D mapFrom;
+uniform float mixFrom;
 varying vec2 vUv;
 vec3 srgbToLinear(vec3 c) {
   return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
 }
 void main() {
   vec3 c = texture2D(map, vUv).rgb;
+  if (mixFrom > 0.0) c = mix(c, texture2D(mapFrom, vUv).rgb, mixFrom); // 전환 섞기(이전 프레임 비율)
   gl_FragColor = vec4(srgbToLinear(c), 1.0);
   #include <colorspace_fragment>
 }`;
@@ -58,7 +65,7 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
   const blank = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
   blank.needsUpdate = true;
   const material = new THREE.ShaderMaterial({
-    uniforms: { map: { value: blank } },
+    uniforms: { map: { value: blank }, mapFrom: { value: blank }, mixFrom: { value: 0 } },
     vertexShader: VERTEX,
     fragmentShader: FRAGMENT,
     depthTest: false,
@@ -112,7 +119,7 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
   // 재생기가 해제한 요소(src 없음)의 텍스처를 정리한다.
   function sweepTextures() {
     for (const element of textures.keys()) {
-      if (element !== shown.element && !element.getAttribute('src')) dropTexture(element);
+      if (element !== shown.element && element !== fade?.element && !element.getAttribute('src')) dropTexture(element);
     }
   }
 
@@ -120,8 +127,22 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
   // 안전 정지(H 이미지)는 예외다: 이미지가 아직 불러오는 중이거나 실패했으면 이전 영상 프레임(캐릭터가 보이는 화면)을 남기지 않고
   // 검정 가림 화면(kind 'cover')으로 바꾼다. 이미지가 준비되면 그때 이미지로 바꾼다.
   const shown = { element: null, kind: null, clip: null };
-  // 진단: 마지막 표시 교체 { clip, kind, atMs(교체 시각), drawnMs(그 뒤 첫 그림 시각) }.
+  // 진단: 마지막 표시 교체 { clip, kind, atMs(교체 시각), drawnMs(그 뒤 첫 그림 시각), blendMs(섞었으면) }.
   let swap = null;
+  // 진행 중 섞기 { element(이전 영상), startMs, ms }. null이면 섞지 않음.
+  let fade = null;
+  function clearFade() {
+    fade = null;
+    material.uniforms.mapFrom.value = blank;
+    material.uniforms.mixFrom.value = 0;
+  }
+  // 그릴 때마다 섞기 비율을 정한다(이전 프레임 1 → 0). 다 섞었으면 정리한다.
+  function updateFade(nowMs) {
+    if (fade === null) return;
+    const left = 1 - (nowMs - fade.startMs) / fade.ms;
+    if (left <= 0) clearFade();
+    else material.uniforms.mixFrom.value = Math.min(1, left);
+  }
   function syncDisplay() {
     const d = getDisplay();
     if (!d || d.element === shown.element) return false;
@@ -130,15 +151,26 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
       shown.element = null;
       shown.kind = 'cover';
       shown.clip = null;
-      swap = { clip: null, kind: 'cover', atMs: performance.now(), drawnMs: null };
+      swap = { clip: null, kind: 'cover', atMs: performance.now(), drawnMs: null, blendMs: 0 };
+      clearFade();
       material.uniforms.map.value = blank;
       mesh.scale.set(W, H, 1);
       return true;
     }
+    // 섞기: 지금 그리던 이전 영상과 새 영상이 같은 크기일 때만(같은 사각형·UV를 쓴다).
+    const from = shown.element;
+    const canBlend = d.kind === 'video' && d.blendMs > 0 && d.blendFrom === from && shown.kind === 'video'
+      && elementSize(from).width === elementSize(d.element).width && elementSize(from).height === elementSize(d.element).height;
+    clearFade();
+    if (canBlend) {
+      fade = { element: from, startMs: performance.now(), ms: d.blendMs };
+      material.uniforms.mapFrom.value = textureFor(from);
+      material.uniforms.mixFrom.value = 1;
+    }
     shown.element = d.element;
     shown.kind = d.kind;
     shown.clip = d.clip;
-    swap = { clip: d.clip, kind: d.kind, atMs: performance.now(), drawnMs: null };
+    swap = { clip: d.clip, kind: d.kind, atMs: performance.now(), drawnMs: null, blendMs: canBlend ? d.blendMs : 0 };
     material.uniforms.map.value = textureFor(d.element);
     // contain: 원본 비율 그대로 무대 안에 맞춘다(480:852·941:1672 ≈ 9:16, 아주 작은 위아래 여백).
     const { width, height } = elementSize(d.element);
@@ -290,6 +322,7 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
     const path = currentPath();
     if (path === null) return;
     const started = performance.now();
+    updateFade(started);
     try {
       renderWith(path);
     } catch (error) {
@@ -336,9 +369,9 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
       nextDrawMs = null;
       if (due(nowMs)) draw(nowMs);
     },
-    // 지금 그리고 있는 요소(재생기가 미리 되감지 않도록).
-    get shownElement() {
-      return shown.element;
+    // 렌더러가 아직 쓰는 요소인가 — 지금 그리는 요소와 섞는 중인 이전 요소(재생기가 미리 되감지 않도록).
+    usesElement(element) {
+      return element !== null && (element === shown.element || element === fade?.element);
     },
     // 캔버스 CSS 크기(px). 크기가 바뀌면 다시 시험한다.
     resize(width, height) {
@@ -389,6 +422,7 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
         health: post?.health ?? null,
         shown: { kind: shown.kind, clip: shown.clip },
         swap: swap && { ...swap },
+        blending: fade !== null,
         textures: renderer.info.memory.textures,
       };
     },

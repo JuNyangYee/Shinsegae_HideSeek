@@ -3,7 +3,7 @@
 
 import { SETTINGS } from './config/settings.js';
 import { createProximityJudge } from './core/proximity.js';
-import { createSequenceDirector } from './core/sequence.js';
+import { clipPlayMs, createSequenceDirector } from './core/sequence.js';
 import { createMockInput } from './input/mock-input.js';
 import { bindMockControls } from './input/mock-controls.js';
 import { createSeqPlayer } from './scene/seq-player.js';
@@ -34,7 +34,8 @@ document.getElementById('threshold-hint').textContent =
 const midSubstitute = SETTINGS.sequence.clips.SC1b_Glance.file === null;
 const diagnostics = createDiagnostics(document.getElementById('diag-list'), {
   note: `${midSubstitute ? '중간 거리 대기: SC1b_Glance 영상 없음 → SC0A/B/C 놀이 순환으로 대체 · ' : ''}`
-    + `SC1_Notice 실제 길이 ${(SETTINGS.sequence.clips.SC1_Notice.durationMs / 1000).toFixed(2)} s(v02 목표 3 s) · 모의 입력(실제 센서 아님)`,
+    + `SC1_Notice 원본 ${(SETTINGS.sequence.clips.SC1_Notice.durationMs / 1000).toFixed(2)} s · 편집 재생 ${(clipPlayMs(SETTINGS.sequence.clips.SC1_Notice) / 1000).toFixed(2)} s(v02 목표 3 s)`
+    + ` · 편집 구간은 임시값 · 모의 입력(실제 센서 아님)`,
 });
 
 const judge = createProximityJudge(SETTINGS.proximity);
@@ -48,9 +49,9 @@ const player = createSeqPlayer({
   now,
   onFinished: (playId) => apply(director.playbackFinished(playId, now())),
   onError: (playId, reason) => apply(director.playbackFailed(playId, reason, now())),
-  // 표시가 바뀌면 렌더러가 다음 화면 갱신을 기다리지 않고 바로 그린다. 렌더러가 아직 그리는 요소는 재생기가 미리 되감지 않는다.
+  // 표시가 바뀌면 렌더러가 다음 화면 갱신을 기다리지 않고 바로 그린다. 렌더러가 아직 쓰는 요소(그리는 중·섞는 중)는 재생기가 미리 되감지 않는다.
   onDisplayChange: () => stageRenderer?.refresh(),
-  isShown: (element) => stageRenderer?.shownElement === element,
+  isShown: (element) => stageRenderer?.usesElement(element) ?? false,
 });
 
 // 시퀀스 코어가 낸 지시를 재생기에 전달한다.
