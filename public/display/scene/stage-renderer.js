@@ -6,6 +6,7 @@
 //     후처리 장면 타깃(선형)에 그리면 그대로 두며 유화 필터가 다시 sRGB로 바꿔 처리한다. 톤 매핑 없음(Three 기본 NoToneMapping).
 //   - 그리기 경로: 후처리(반정밀 → 8비트)와 직접 그리기를 운영 그리기 함수를 그대로 불러 GL 오류로 시험한다(probe).
 //   - 그리기 박자: renderFps(12)로 그린다(필터의 「초당 그림」). 영상은 실제 시간 24fps 1배속으로 재생되고 그림만 12fps로 표본한다.
+//     표시 요소가 바뀌면 재생기가 refresh()로 알려 다음 화면 갱신을 기다리지 않고 바로 한 장 그린다.
 // 실패 정책:
 //   - 유화를 켰는데 후처리를 쓸 수 없거나(시험 실패) 실행 중 실패(예외·첫 획 층 칠함 확인 실패)하면 **원본(직접 그리기)으로 바꾸고 오류를 보인다**.
 //     O로 끄고 다시 켜면 새로 시험한다(복구).
@@ -119,6 +120,8 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
   // 안전 정지(H 이미지)는 예외다: 이미지가 아직 불러오는 중이거나 실패했으면 이전 영상 프레임(캐릭터가 보이는 화면)을 남기지 않고
   // 검정 가림 화면(kind 'cover')으로 바꾼다. 이미지가 준비되면 그때 이미지로 바꾼다.
   const shown = { element: null, kind: null, clip: null };
+  // 진단: 마지막 표시 교체 { clip, kind, atMs(교체 시각), drawnMs(그 뒤 첫 그림 시각) }.
+  let swap = null;
   function syncDisplay() {
     const d = getDisplay();
     if (!d || d.element === shown.element) return false;
@@ -127,6 +130,7 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
       shown.element = null;
       shown.kind = 'cover';
       shown.clip = null;
+      swap = { clip: null, kind: 'cover', atMs: performance.now(), drawnMs: null };
       material.uniforms.map.value = blank;
       mesh.scale.set(W, H, 1);
       return true;
@@ -134,6 +138,7 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
     shown.element = d.element;
     shown.kind = d.kind;
     shown.clip = d.clip;
+    swap = { clip: d.clip, kind: d.kind, atMs: performance.now(), drawnMs: null };
     material.uniforms.map.value = textureFor(d.element);
     // contain: 원본 비율 그대로 무대 안에 맞춘다(480:852·941:1672 ≈ 9:16, 아주 작은 위아래 여백).
     const { width, height } = elementSize(d.element);
@@ -277,6 +282,11 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
     }
     if (syncDisplay()) nextDrawMs = null; // 표시가 바뀌면 박자를 기다리지 않고 바로 그린다
     if (!due(nowMs)) return;
+    draw(nowMs);
+  }
+
+  // 한 장 그린다(박자 판정은 부르는 쪽).
+  function draw(nowMs) {
     const path = currentPath();
     if (path === null) return;
     const started = performance.now();
@@ -304,7 +314,9 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
         return;
       }
     }
-    lastDrawMs = performance.now() - started;
+    const endedMs = performance.now();
+    lastDrawMs = endedMs - started;
+    if (swap !== null && swap.drawnMs === null) swap.drawnMs = endedMs;
     drawTimes.push(nowMs);
     while (drawTimes.length > 0 && nowMs - drawTimes[0] > 1000) drawTimes.shift();
   }
@@ -315,6 +327,19 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
 
   let viewport = { width: 0, height: 0, pixelRatio: 0 };
   return {
+    // 재생기가 표시를 바꾼 직후 부른다: 다음 화면 갱신(requestAnimationFrame)을 기다리지 않고 바로 교체하고 한 장 그린다.
+    // 화면 갱신이 드문 환경에서도 새 클립의 첫 그림이 늦지 않게 하려는 것이다. 박자 격자는 이 그림부터 다시 센다.
+    refresh() {
+      if (disposed || fault !== null) return;
+      if (!syncDisplay()) return;
+      const nowMs = performance.now();
+      nextDrawMs = null;
+      if (due(nowMs)) draw(nowMs);
+    },
+    // 지금 그리고 있는 요소(재생기가 미리 되감지 않도록).
+    get shownElement() {
+      return shown.element;
+    },
     // 캔버스 CSS 크기(px). 크기가 바뀌면 다시 시험한다.
     resize(width, height) {
       if (!(width > 0 && height > 0)) return;
@@ -363,6 +388,7 @@ export function createStageRenderer(canvas, { cfg, getDisplay, onStatus }) {
         internal: post?.internal ?? null,
         health: post?.health ?? null,
         shown: { kind: shown.kind, clip: shown.clip },
+        swap: swap && { ...swap },
         textures: renderer.info.memory.textures,
       };
     },

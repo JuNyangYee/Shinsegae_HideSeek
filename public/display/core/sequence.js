@@ -6,8 +6,11 @@
 //   play    — 보이는 놀이 루프(far: SC0A → B → C 순환, mid: 눈치챈 뒤 대기 — SC1b가 없어 같은 순환으로 대체).
 //   notice  — SC1_Notice 1회(far → mid 진입).
 //   duck    — SC2_Duck 1회(P → H).
-//   hidden  — SC3_Hidden_Clue 반복(H → H).
+//   hidden  — 숨은 대기(H, 클립 없음). 랜덤 대기(hiddenClueDelayMs) 뒤 SC3_Hidden_Clue를 1회 재생하고 끝나면 다시 랜덤 대기.
 //   return  — SC4_Return_To_Play 1회(H → P).
+//
+// 판정이 바뀌어도 진행 중 클립은 끊지 않는다(끝난 뒤 최신 판정 하나로 다음을 고른다). 예외는 unknown(즉시 안전 정지)뿐이다.
+// 클립이 없는 숨은 대기 중에는 mid·far가 되면 바로 복귀한다.
 //
 // 모든 입력 함수는 재생 계층에 줄 지시 목록을 돌려준다.
 //   { type: 'play', playId, clip, phase, durationMs }
@@ -15,10 +18,11 @@
 //   { type: 'pose', pose: 'hidden' }   // 연출 없이 H 정지 이미지로 바로 둔다(안전 정지)
 
 export const PHASES = Object.freeze(['safe', 'play', 'notice', 'duck', 'hidden', 'return']);
-// 캐릭터가 숨은 자세(H)로 끝나는 단계. 여기서 끝나면 다음은 숨은 루프나 복귀다.
+// 캐릭터가 숨은 자세(H)로 끝나는 단계. 여기서 끝나면 다음은 숨은 대기나 복귀다.
 const HIDDEN_END = new Set(['safe', 'duck', 'hidden']);
 
-export function createSequenceDirector(cfg) {
+// random: 0 이상 1 미만을 돌려주는 함수(테스트에서 주입). 숨은 단서 대기 시간 추첨에만 쓴다.
+export function createSequenceDirector(cfg, { random = Math.random } = {}) {
   let phase = 'safe'; // unknown을 멀어짐으로 오인해 저절로 나오지 않게 안전 정지로 시작
   let decision = 'unknown'; // 가장 최근 판정 하나만 보관한다(큐 없음)
   let current = null; // 진행 중 재생 { playId, clip, deadlineMs }
@@ -26,6 +30,7 @@ export function createSequenceDirector(cfg) {
   let noticed = false; // 이번 근접 방문(far가 아닌 동안)에 이미 관객을 알아챘는가 — 같은 mid에서 눈치챔 반복 금지
   const cycleIndex = { play: 0, mid: 0 };
   let retryAtMs = null; // 재생 오류 후 다시 판단할 시각. null이면 오류 대기 아님
+  let clueAtMs = null; // 숨은 대기 중 SC3를 재생할 시각(대기에 들어갈 때 한 번만 추첨). null이면 예약 없음
   let suspended = false; // 탭 숨김·렌더러 실패 등 바깥 사정으로 멈춤
   let lastError = null; // { playId, clip, reason, atMs }
   let ignoredCompletions = 0;
@@ -35,6 +40,7 @@ export function createSequenceDirector(cfg) {
     const playId = ++lastPlayId;
     current = { playId, clip, deadlineMs: nowMs + durationMs + cfg.playTimeoutMarginMs };
     phase = nextPhase;
+    clueAtMs = null;
     if (nextPhase !== 'play' && decision !== 'far') noticed = true; // 눈치챔·숨기·숨음·복귀는 관객을 이미 안 상태
     return [{ type: 'play', playId, clip, phase: nextPhase, durationMs }];
   }
@@ -55,10 +61,20 @@ export function createSequenceDirector(cfg) {
     return actions;
   }
 
-  // 진행 중 클립을 취소하고 H 정지 이미지로 안전 정지한다.
+  // 숨은 대기: 화면은 그대로(숨기·단서 클립의 마지막 프레임 또는 H 정지 이미지) 두고 다음 단서 시각만 예약한다.
+  function enterHiddenWait(nowMs) {
+    const { minMs, maxMs } = cfg.hiddenClueDelayMs;
+    phase = 'hidden';
+    noticed = true; // near에서만 들어온다 — 숨은 상태는 관객을 이미 안 상태(클립을 시작하는 단계와 같게)
+    clueAtMs = nowMs + Math.round(minMs + random() * (maxMs - minMs));
+    return [];
+  }
+
+  // 진행 중 클립을 취소하고 H 정지 이미지로 안전 정지한다(숨은 단서 예약도 취소).
   function safeStop() {
     const actions = interrupt();
     phase = 'safe';
+    clueAtMs = null;
     actions.push({ type: 'pose', pose: 'hidden' });
     return actions;
   }
@@ -67,20 +83,14 @@ export function createSequenceDirector(cfg) {
   function advance(nowMs) {
     if (current || suspended || retryAtMs !== null || decision === 'unknown') return [];
     if (HIDDEN_END.has(phase)) {
-      return decision === 'near' ? startClip('hidden', cfg.hiddenClip, nowMs) : startClip('return', cfg.returnClip, nowMs);
+      if (decision !== 'near') return startClip('return', cfg.returnClip, nowMs); // 숨은 대기 중이면 바로 복귀
+      if (phase !== 'hidden' || clueAtMs === null) return enterHiddenWait(nowMs); // 숨기·단서가 끝났거나 안전 정지에서 시작
+      return nowMs >= clueAtMs ? startClip('hidden', cfg.hiddenClip, nowMs) : []; // 예약된 시각까지 대기(다시 추첨하지 않음)
     }
     // 보이는 자세(P)로 끝남: play · notice · return
     if (decision === 'near') return startClip('duck', cfg.duckClip, nowMs);
     if (decision === 'mid' && !noticed) return startClip('notice', cfg.noticeClip, nowMs);
     return startClip('play', nextLoopClip(), nowMs);
-  }
-
-  // 판정이 바뀌었을 때, 진행 중 클립을 바로 끊어야 하는가.
-  function shouldInterrupt() {
-    if (phase === 'play') return decision === 'near' || (decision === 'mid' && !noticed && cfg.interruptPlayForNotice);
-    if (phase === 'notice') return decision === 'near';
-    if (phase === 'hidden') return decision !== 'near';
-    return false; // duck·return: 끝난 뒤 최신 판정으로 재평가
   }
 
   function fail(reason, nowMs) {
@@ -89,13 +99,14 @@ export function createSequenceDirector(cfg) {
     return safeStop();
   }
 
-  // 시간에 따른 처리: 재생 timeout은 오류, 오류 대기가 끝나면 다시 판단.
+  // 시간에 따른 처리: 재생 timeout은 오류, 오류 대기가 끝나면 다시 판단, 숨은 단서 예약 시각이 되면 SC3 1회.
   function expire(nowMs) {
     if (current && nowMs > current.deadlineMs) return fail('timeout', nowMs);
     if (retryAtMs !== null && nowMs >= retryAtMs) {
       retryAtMs = null;
       return advance(nowMs);
     }
+    if (clueAtMs !== null && nowMs >= clueAtMs) return advance(nowMs);
     return [];
   }
 
@@ -111,7 +122,7 @@ export function createSequenceDirector(cfg) {
       if (current || phase !== 'safe') actions.push(...safeStop());
       return actions;
     }
-    if (current && shouldInterrupt()) actions.push(...interrupt());
+    // 그 밖의 변화는 진행 중 클립을 끊지 않는다 — 판정만 바꿔 두고 클립이 끝나면 최신 판정으로 고른다(advance가 진행 중이면 무시).
     return actions.concat(advance(nowMs));
   }
 
@@ -163,6 +174,7 @@ export function createSequenceDirector(cfg) {
       noticed,
       suspended,
       retryAtMs,
+      clueAtMs,
       lastError,
       ignoredCompletions,
     };

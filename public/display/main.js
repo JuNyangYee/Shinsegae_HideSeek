@@ -39,6 +39,7 @@ const diagnostics = createDiagnostics(document.getElementById('diag-list'), {
 
 const judge = createProximityJudge(SETTINGS.proximity);
 const director = createSequenceDirector(SETTINGS.sequence);
+let stageRenderer = null; // 아래에서 만든다(재생기의 표시 변경 알림이 참조하므로 먼저 선언)
 
 const player = createSeqPlayer({
   clips: SETTINGS.sequence.clips,
@@ -47,6 +48,9 @@ const player = createSeqPlayer({
   now,
   onFinished: (playId) => apply(director.playbackFinished(playId, now())),
   onError: (playId, reason) => apply(director.playbackFailed(playId, reason, now())),
+  // 표시가 바뀌면 렌더러가 다음 화면 갱신을 기다리지 않고 바로 그린다. 렌더러가 아직 그리는 요소는 재생기가 미리 되감지 않는다.
+  onDisplayChange: () => stageRenderer?.refresh(),
+  isShown: (element) => stageRenderer?.shownElement === element,
 });
 
 // 시퀀스 코어가 낸 지시를 재생기에 전달한다.
@@ -75,7 +79,6 @@ function setSuspendReason(reason, on) {
 }
 
 // ── 무대 렌더러(Three.js). 모듈 불러오기·WebGL2 생성 실패도 한국어 오류로 보인다 ──
-let stageRenderer = null;
 let renderStatus = null;
 let rendererError = null;
 try {

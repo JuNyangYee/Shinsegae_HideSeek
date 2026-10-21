@@ -41,8 +41,8 @@ export const SETTINGS = Object.freeze({
     duckClip: 'SC2_Duck',
     hiddenClip: 'SC3_Hidden_Clue',
     returnClip: 'SC4_Return_To_Play',
-    // 임시 선택: far → mid 진입 시 보이던 놀이 루프를 끊고 바로 눈치챔을 재생한다(8초 루프 끝까지 기다리면 반응이 늦음).
-    interruptPlayForNotice: true,
+    // 임시값: 숨은 대기 중 SC3(숨은 단서)를 1회 재생하기까지의 랜덤 대기(ms). 숨은 대기에 들어갈 때마다 이 범위에서 한 번 추첨한다.
+    hiddenClueDelayMs: Object.freeze({ minMs: 8000, maxMs: 16000 }),
     playTimeoutMarginMs: 4000, // 임시값: 클립 길이 + 이 여유(불러오기·탐색 포함) 안에 ended가 없으면 재생 오류(timeout)
     playbackRetryDelayMs: 3000, // 임시값: 재생 오류 후 이만큼(ms) 안전 정지한 뒤 다시 판단
   }),

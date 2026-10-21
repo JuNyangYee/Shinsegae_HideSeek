@@ -32,79 +32,100 @@ test('안전 정지·unknown에서 시작해 far면 복귀 후 SC0A → B → C 
   assert.deepEqual(seen, ['SC0A_Pat', 'SC0B_Roll', 'SC0C_Playful', 'SC0A_Pat']);
 });
 
-test('far → mid는 놀이를 끊고 눈치챔 1회, 같은 mid에서는 반복하지 않고, far를 거쳐 다시 오면 또 눈치챈다', () => {
+test('판정이 바뀌어도 진행 중 클립은 끝까지 재생하고, 끝난 뒤 최신 판정 하나만 반영한다(far → mid 눈치챔 1회)', () => {
   const director = createSequenceDirector(CFG);
   const play = startPlaying(director, 0);
 
-  const toMid = director.setDecision('mid', 9000);
-  assert.deepEqual(types(toMid), ['cancel', 'play']);
-  assert.equal(toMid[0].playId, play.playId);
-  const [notice] = plays(toMid);
+  assert.deepEqual(director.setDecision('mid', 9000), []); // 놀이를 끊지 않는다
+  const [notice] = plays(director.playbackFinished(play.playId, 16100));
   assert.equal(notice.clip, 'SC1_Notice');
 
   // 눈치챔이 끝나면 중간 대기(SC1b 없음 → 놀이 순환 대체). 이어지는 mid에서 눈치챔이 다시 나오지 않는다.
-  let [wait] = plays(director.playbackFinished(notice.playId, 17100));
+  let [wait] = plays(director.playbackFinished(notice.playId, 24200));
   assert.equal(wait.clip, CFG.midIdleCycle[0]);
-  assert.deepEqual(director.setDecision('mid', 17200), []);
-  [wait] = plays(director.playbackFinished(wait.playId, 25200));
+  [wait] = plays(director.playbackFinished(wait.playId, 32300));
   assert.notEqual(wait.clip, 'SC1_Notice');
 
-  // far로 돌아가면 루프는 그대로 이어지고, 다시 mid에 오면 눈치챔을 다시 한다.
-  assert.deepEqual(director.setDecision('far', 26000), []);
-  assert.deepEqual(clipsOf(director.setDecision('mid', 27000)), ['SC1_Notice']);
+  // far를 거쳐 다시 mid에 오면 다시 눈치챈다(역시 클립 끝에서).
+  assert.deepEqual(director.setDecision('far', 33000), []);
+  assert.deepEqual(director.setDecision('mid', 34000), []);
+  assert.deepEqual(clipsOf(director.playbackFinished(wait.playId, 40400)), ['SC1_Notice']);
 });
 
-test('near는 보이는 루프·눈치챔을 바로 끊고 숨기, 숨는 중 바뀐 판정은 최신 하나만 끝난 뒤 반영한다', () => {
+test('near도 놀이·눈치챔을 끊지 않고 끝난 뒤 숨기, 빠르게 near → far로 돌아오면 지나간 near는 실행하지 않는다', () => {
   const director = createSequenceDirector(CFG);
   const play = startPlaying(director, 0);
-  const [notice] = plays(director.setDecision('mid', 8000));
 
-  const duckActions = director.setDecision('near', 9000);
-  assert.deepEqual(types(duckActions), ['cancel', 'play']);
-  assert.equal(duckActions[0].playId, notice.playId);
-  const [duck] = plays(duckActions);
+  // 놀이 중 near → far: 끝났을 때 최신 판정 far만 반영 → 놀이 계속
+  assert.deepEqual(director.setDecision('near', 8500), []);
+  assert.deepEqual(director.setDecision('far', 8800), []);
+  const [next] = plays(director.playbackFinished(play.playId, 15100));
+  assert.equal(next.clip, 'SC0B_Roll');
+
+  // 놀이 → mid(끝에서 눈치챔) → 눈치챔 중 near(끝에서 숨기)
+  assert.deepEqual(director.setDecision('mid', 16000), []);
+  const [notice] = plays(director.playbackFinished(next.playId, 23200));
+  assert.equal(notice.clip, 'SC1_Notice');
+  assert.deepEqual(director.setDecision('near', 24000), []);
+  const [duck] = plays(director.playbackFinished(notice.playId, 31300));
   assert.equal(duck.clip, 'SC2_Duck');
-  assert.ok(duck.playId > play.playId);
 
-  // 숨는 중 far → mid → far: 끊지 않고 저장만, 끝나면 최신 far로 복귀
-  assert.deepEqual(director.setDecision('far', 9500), []);
-  assert.deepEqual(director.setDecision('mid', 9600), []);
-  assert.deepEqual(director.setDecision('far', 9700), []);
-  assert.deepEqual(clipsOf(director.playbackFinished(duck.playId, 13100)), ['SC4_Return_To_Play']);
+  // 숨는 중 far → mid → far: 저장만, 끝나면 최신 far로 복귀
+  assert.deepEqual(director.setDecision('far', 31500), []);
+  assert.deepEqual(director.setDecision('mid', 31600), []);
+  assert.deepEqual(director.setDecision('far', 31700), []);
+  assert.deepEqual(clipsOf(director.playbackFinished(duck.playId, 35400)), ['SC4_Return_To_Play']);
 });
 
-test('숨은 루프는 near 동안 SC3 반복, mid가 되면 바로 복귀하고 끝난 뒤 눈치챔 없이 중간 대기', () => {
-  const director = createSequenceDirector(CFG);
-  startPlaying(director, 0);
-  const [duck] = plays(director.setDecision('near', 8000));
-  const [hidden1] = plays(director.playbackFinished(duck.playId, 12100));
-  assert.equal(hidden1.clip, 'SC3_Hidden_Clue');
-  const [hidden2] = plays(director.playbackFinished(hidden1.playId, 16200));
-  assert.equal(hidden2.clip, 'SC3_Hidden_Clue');
-  assert.ok(hidden2.playId > hidden1.playId);
+test('숨기가 끝나면 숨은 대기 → 랜덤 대기 뒤 SC3 1회 → 새 랜덤 대기, 대기 중 mid는 바로 복귀', () => {
+  const draws = [0, 0.5];
+  let calls = 0;
+  const director = createSequenceDirector(CFG, { random: () => draws[calls++] });
+  const { minMs, maxMs } = CFG.hiddenClueDelayMs;
+  const play = startPlaying(director, 0);
+  director.setDecision('near', 1000);
+  const [duck] = plays(director.playbackFinished(play.playId, 8100));
+  assert.equal(duck.clip, 'SC2_Duck');
 
-  const back = director.setDecision('mid', 17000);
-  assert.deepEqual(types(back), ['cancel', 'play']);
-  const [ret] = plays(back);
-  assert.equal(ret.clip, 'SC4_Return_To_Play');
-  const after = clipsOf(director.playbackFinished(ret.playId, 24100));
-  assert.deepEqual(after, [CFG.midIdleCycle[0]]);
-  assert.notDeepEqual(after, ['SC1_Notice']);
+  // 숨기 끝 → 클립 없는 숨은 대기(첫 추첨 0 → minMs)
+  assert.deepEqual(director.playbackFinished(duck.playId, 12200), []);
+  let snap = director.snapshot();
+  assert.deepEqual([snap.phase, snap.playId, snap.clueAtMs], ['hidden', null, 12200 + minMs]);
+  assert.deepEqual(director.tick(12200 + minMs - 1), []); // 대기 중 tick은 다시 추첨하지 않는다
+  assert.equal(calls, 1);
 
-  // 복귀 중 near가 되면 끊지 않고, 복귀가 끝난 뒤 다시 숨는다.
-  const [duck2] = plays(director.setDecision('near', 25000));
-  const [hidden3] = plays(director.playbackFinished(duck2.playId, 29100));
-  const [ret2] = plays(director.setDecision('far', 30000));
-  assert.equal(ret2.clip, 'SC4_Return_To_Play');
-  assert.ok(hidden3.playId < ret2.playId);
-  assert.deepEqual(director.setDecision('near', 31000), []);
-  assert.deepEqual(clipsOf(director.playbackFinished(ret2.playId, 37100)), ['SC2_Duck']);
+  const [clue] = plays(director.tick(12200 + minMs));
+  assert.equal(clue.clip, 'SC3_Hidden_Clue');
+  assert.equal(director.snapshot().clueAtMs, null);
+  // 단서 끝 → 새 랜덤 대기(두 번째 추첨 0.5)
+  const t1 = 12200 + minMs + 4100;
+  assert.deepEqual(director.playbackFinished(clue.playId, t1), []);
+  assert.equal(director.snapshot().clueAtMs, t1 + Math.round(minMs + 0.5 * (maxMs - minMs)));
+  assert.equal(calls, 2);
+
+  // 대기 중 mid → 끊을 클립 없이 바로 복귀, 예약 취소. 복귀 뒤에는 눈치챔 없이 중간 대기.
+  const back = director.setDecision('mid', t1 + 1000);
+  assert.deepEqual(types(back), ['play']);
+  assert.equal(back[0].clip, 'SC4_Return_To_Play');
+  assert.equal(director.snapshot().clueAtMs, null);
+  assert.deepEqual(clipsOf(director.playbackFinished(back[0].playId, t1 + 8100)), [CFG.midIdleCycle[0]]);
 });
 
-test('unknown은 숨는 중에도 즉시 취소하고 H 안전 정지, 늦은 완료는 무시, 회복이 near면 바로 숨은 루프', () => {
-  const director = createSequenceDirector(CFG);
-  startPlaying(director, 0);
-  const [duck] = plays(director.setDecision('near', 8000));
+test('단서(SC3) 재생 중 mid는 끝까지 재생한 뒤 복귀한다', () => {
+  const director = createSequenceDirector(CFG, { random: () => 0 });
+  director.setDecision('near', 0); // 시작 near → 숨은 대기부터
+  assert.deepEqual([director.snapshot().phase, director.snapshot().noticed], ['hidden', true]); // 숨은 대기는 관객 인지 상태
+  const [clue] = plays(director.tick(CFG.hiddenClueDelayMs.minMs));
+  assert.equal(clue.clip, 'SC3_Hidden_Clue');
+  assert.deepEqual(director.setDecision('mid', CFG.hiddenClueDelayMs.minMs + 1000), []);
+  assert.deepEqual(clipsOf(director.playbackFinished(clue.playId, CFG.hiddenClueDelayMs.minMs + 4100)), ['SC4_Return_To_Play']);
+});
+
+test('unknown은 숨는 중에도 즉시 취소하고 H 안전 정지, 늦은 완료는 무시, 회복이 near면 숨은 대기, 대기 중 unknown은 예약 취소', () => {
+  const director = createSequenceDirector(CFG, { random: () => 0 });
+  const play = startPlaying(director, 0);
+  director.setDecision('near', 1000);
+  const [duck] = plays(director.playbackFinished(play.playId, 8100));
 
   const stop = director.setDecision('unknown', 9000);
   assert.deepEqual(stop, [{ type: 'cancel', playId: duck.playId }, { type: 'pose', pose: 'hidden' }]);
@@ -112,7 +133,12 @@ test('unknown은 숨는 중에도 즉시 취소하고 H 안전 정지, 늦은 �
   assert.deepEqual(director.playbackFinished(duck.playId, 12100), []); // 취소된 재생의 늦은 완료
   assert.equal(director.snapshot().ignoredCompletions, 1);
 
-  assert.deepEqual(clipsOf(director.setDecision('near', 13000)), ['SC3_Hidden_Clue']);
+  assert.deepEqual(director.setDecision('near', 13000), []); // 숨은 대기부터(SC3 바로 재생 안 함)
+  assert.deepEqual([director.snapshot().phase, director.snapshot().clueAtMs], ['hidden', 13000 + CFG.hiddenClueDelayMs.minMs]);
+
+  assert.deepEqual(director.setDecision('unknown', 14000), [{ type: 'pose', pose: 'hidden' }]);
+  assert.deepEqual([director.snapshot().phase, director.snapshot().clueAtMs], ['safe', null]);
+  assert.deepEqual(director.tick(13000 + CFG.hiddenClueDelayMs.minMs + 1), []); // 취소된 예약은 재생하지 않는다
 });
 
 test('재생 timeout은 오류로 안전 정지, 기한 뒤 완료는 받지 않고, 대기 후 같은 판정으로 새 ID 재시도', () => {
@@ -144,5 +170,9 @@ test('재생기 오류는 현재 ID만 받고, retryNow로 대기를 건너뛰�
   // 탭 숨김 등으로 멈추면 안전 정지, 멈춘 동안 판정이 바뀌어도 재생하지 않고, 풀리면 최신 판정으로 시작
   assert.deepEqual(types(director.setSuspended(true, 400)), ['cancel', 'pose']);
   assert.deepEqual(director.setDecision('near', 500), []);
-  assert.deepEqual(clipsOf(director.setSuspended(false, 600)), ['SC3_Hidden_Clue']);
+  assert.deepEqual(director.setSuspended(false, 600), []); // 풀리면 near → 숨은 대기(단서 예약)
+  assert.equal(director.snapshot().phase, 'hidden');
+  assert.notEqual(director.snapshot().clueAtMs, null);
+  assert.deepEqual(types(director.setSuspended(true, 700)), ['pose']); // 다시 멈추면 예약 취소
+  assert.equal(director.snapshot().clueAtMs, null);
 });

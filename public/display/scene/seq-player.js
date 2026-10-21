@@ -12,19 +12,40 @@
 //   - 자동 재생이 막히면(NotAllowedError) 'autoplay-blocked' 오류로 알리고 blocked를 켠다 — 사용자 조작 뒤 clearBlocked()로 푼다.
 //   - 안전 정지 이미지(H)는 실패하면 stillRetryMs마다 새 <img>로 다시 불러온다. 시도마다 세대 번호를 두어 이전 시도의 늦은 load·error는 무시한다.
 //     준비 전·실패 중에는 렌더러가 가림 화면을 그리고(이전 영상 프레임을 남기지 않음), 부르는 쪽이 stillStatus로 오류를 화면에 알린다.
+//   - 전환 대기 줄이기: 표시가 바뀌면 onDisplayChange로 바로 알린다(렌더러가 다음 화면 갱신을 기다리지 않고 첫 그림을 그림).
+//     그 뒤 지금 쓰지 않는 영상(표시 중·재생 중·렌더러가 아직 그리는 요소 제외)을 미리 0초로 되감아 다음 재생 때 탐색 대기를 없앤다.
+//     미리 되감는 중에 그 영상이 재생 차례가 되면 탐색이 끝나기를 기다린 뒤 시작한다(다시 탐색하지 않음).
+//     표시 중인 영상은 건드리지 않는다 — 같은 영상을 다시 재생할 때만(예: 숨은 대기 뒤 SC3) 재생 시작 때 탐색한다.
+//   - 진단: 최근 전환마다 이전 클립 끝 → 재생 요청 → 준비(탐색) → 재생 시작(표시 교체) → 첫 영상 프레임 시각을 남긴다.
 
+const HAVE_METADATA = 1;
 const HAVE_CURRENT_DATA = 2;
+const TRANSITION_LOG = 6; // 진단용으로 남기는 최근 전환 수
 
 function mediaErrorText(video) {
   const code = video.error?.code;
   return code === undefined ? 'media-error' : `media-error-${code}`;
 }
 
-export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3000, onFinished, onError, now = () => performance.now() }) {
-  // 클립 이름 → { clip, url, video, loads, lastError }
+// onDisplayChange(): display가 바뀐 직후(렌더러가 바로 그리게). isShown(element): 렌더러가 아직 그 요소를 그리는 중인가(미리 되감기 제외).
+// createVideoElement·createImage: 테스트에서 가짜 미디어 요소를 넣을 때만 바꾼다.
+export function createSeqPlayer({
+  clips,
+  seqBase,
+  safeStillUrl,
+  stillRetryMs = 3000,
+  onFinished,
+  onError,
+  onDisplayChange = () => {},
+  isShown = () => false,
+  now = () => performance.now(),
+  createVideoElement = () => document.createElement('video'),
+  createImage = () => new Image(),
+}) {
+  // 클립 이름 → { clip, url, video, loads, rewinds, lastError }
   const entries = {};
   for (const [clip, def] of Object.entries(clips)) {
-    if (def.file) entries[clip] = { clip, url: `${seqBase}${def.file}`, video: null, loads: 0, lastError: null };
+    if (def.file) entries[clip] = { clip, url: `${seqBase}${def.file}`, video: null, loads: 0, rewinds: 0, lastError: null };
   }
 
   let current = null; // 진행 중 재생 토큰 { playId, clip, video, stage, startedMs, listeners }
@@ -32,6 +53,16 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
   let display = null; // 지금 보여야 할 것 { kind: 'video' | 'image', element, clip }
   let blocked = false;
   let disposed = false;
+  const transitions = []; // 최근 전환 계측(진단) — 새것이 뒤
+
+  function setDisplay(next) {
+    display = next;
+    try {
+      onDisplayChange();
+    } catch (error) {
+      console.error('표시 변경 알림 처리 실패:', error); // 그리기 쪽 문제를 재생 오류로 바꾸지 않는다
+    }
+  }
 
   // ── 안전 정지 이미지 ──
   const still = { image: null, status: 'loading', gen: 0, attempts: 0, retryTimer: null };
@@ -46,7 +77,7 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
       previous.onerror = null;
       previous.removeAttribute('src');
     }
-    const image = new Image();
+    const image = createImage();
     image.onload = () => {
       if (disposed || gen !== still.gen) return; // 이전 시도의 늦은 이벤트
       still.status = 'ready';
@@ -61,8 +92,8 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
     still.status = 'loading';
     still.attempts += 1;
     // 지금 안전 정지 중이면 새 이미지를 보이게 한다(준비될 때까지 렌더러는 가림 화면).
-    if (display?.kind === 'image') display = { kind: 'image', element: image, clip: null };
     image.src = safeStillUrl;
+    if (display?.kind === 'image') setDisplay({ kind: 'image', element: image, clip: null });
   }
   loadStill();
 
@@ -73,7 +104,7 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
     video.load();
   }
   function createVideo(entry) {
-    const video = document.createElement('video');
+    const video = createVideoElement();
     video.muted = true;
     video.defaultMuted = true;
     video.playsInline = true;
@@ -99,23 +130,40 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
 
   const isCurrent = (token) => !disposed && current === token;
 
-  // 이벤트 하나를 기다린다. 토큰이 바뀌어도 기다림은 끝까지 가지만, 부르는 쪽이 끝난 뒤 토큰을 확인한다.
-  function waitFor(video, okEvent, check) {
+  // check()가 참이 될 때까지 기다린다(okEvents 중 하나가 올 때마다 다시 확인). 토큰이 바뀌어도 기다림은 끝까지 가지만,
+  // 부르는 쪽이 끝난 뒤 토큰을 확인한다.
+  function waitUntil(video, okEvents, check) {
     return new Promise((resolve, reject) => {
       if (check()) {
         resolve();
         return;
       }
       const done = (fn, value) => {
-        video.removeEventListener(okEvent, onOk);
+        for (const type of okEvents) video.removeEventListener(type, onOk);
         video.removeEventListener('error', onErr);
         fn(value);
       };
-      const onOk = () => done(resolve);
+      const onOk = () => {
+        if (check()) done(resolve);
+      };
       const onErr = () => done(reject, new Error(mediaErrorText(video)));
-      video.addEventListener(okEvent, onOk);
+      for (const type of okEvents) video.addEventListener(type, onOk);
       video.addEventListener('error', onErr);
     });
+  }
+
+  // 지금 쓰지 않는 영상을 미리 0초로 되감는다(다음 재생 때 탐색 대기 줄이기). 표시 중·재생 중·렌더러가 아직 그리는 요소,
+  // 아직 불러오는 중·탐색 중·오류 난 요소는 건드리지 않는다.
+  function rewindIdle() {
+    for (const entry of Object.values(entries)) {
+      const video = entry.video;
+      if (!video || video.error || video.seeking || video.readyState < HAVE_METADATA) continue;
+      if (video === display?.element || video === current?.video || isShown(video)) continue;
+      if (video.currentTime === 0 && !video.ended) continue;
+      video.pause();
+      video.currentTime = 0;
+      entry.rewinds += 1;
+    }
   }
 
   function detach(token) {
@@ -147,18 +195,22 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
     }
     const video = videoFor(entry);
     token.video = video;
+    const m = token.metrics;
     try {
       token.stage = 'loading';
-      await waitFor(video, 'loadeddata', () => video.readyState >= HAVE_CURRENT_DATA);
+      // 미리 되감기 중이면(seeking) 그 탐색이 끝나기를 기다린다 — loadeddata는 처음 한 번만 오므로 seeked·canplay로도 다시 확인한다.
+      if (video.seeking) m.waitedRewind = true;
+      await waitUntil(video, ['loadeddata', 'seeked', 'canplay'], () => video.readyState >= HAVE_CURRENT_DATA && !video.seeking);
       if (!isCurrent(token)) return;
       if (video.currentTime !== 0 || video.ended) {
         token.stage = 'seeking';
+        m.seeked = true;
         video.pause();
-        const seeked = waitFor(video, 'seeked', () => false);
-        video.currentTime = 0;
-        await seeked;
+        video.currentTime = 0; // 여기서 seeking이 켜지고 seeked 때 꺼진다
+        await waitUntil(video, ['seeked'], () => !video.seeking);
         if (!isCurrent(token)) return;
       }
+      m.readyMs = now();
       const onEnded = () => {
         if (!isCurrent(token)) return;
         finish(token, 'finished');
@@ -169,6 +221,13 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
       for (const [type, fn] of token.listeners) video.addEventListener(type, fn);
       token.stage = 'starting';
       video.playbackRate = 1;
+      // 진단: 재생 시작 뒤 실제로 화면에 나간 첫 영상 프레임 시각(지원하는 브라우저만).
+      video.requestVideoFrameCallback?.((frameNow, meta) => {
+        // 한 번만, 그리고 이 재생이 아직 현재일 때만 기록한다(취소·교체 뒤 같은 영상을 다시 쓸 때 늦게 온 콜백을 옛 전환에 남기지 않음).
+        if (m.firstFrameMs !== null || !isCurrent(token)) return;
+        m.firstFrameMs = frameNow;
+        m.firstFrameMediaSec = meta?.mediaTime ?? null;
+      });
       try {
         await video.play();
       } catch (error) {
@@ -184,8 +243,11 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
       if (!isCurrent(token)) return;
       token.stage = 'playing';
       entry.lastError = null;
-      // 실제 재생이 시작된 뒤에야 화면을 바꾼다(그 전까지 이전 프레임 유지).
-      display = { kind: 'video', element: video, clip: token.clip };
+      m.playingMs = now();
+      // 실제 재생이 시작된 뒤에야 화면을 바꾼다(그 전까지 이전 프레임 유지). 바로 알려 렌더러가 첫 그림을 그리게 한 뒤,
+      // 이제 쓰지 않는 영상(방금 끝난 이전 클립 등)을 미리 되감는다.
+      setDisplay({ kind: 'video', element: video, clip: token.clip });
+      rewindIdle();
     } catch (error) {
       fail(token, error?.message || 'load-failed');
     } finally {
@@ -206,7 +268,24 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
     play({ playId, clip }) {
       if (disposed) return;
       stopCurrent('replaced');
-      const token = { playId, clip, video: null, stage: 'pending', startedMs: now(), listeners: [] };
+      const startedMs = now();
+      // 진단: 이전 클립이 정상으로 끝난 직후의 재생이면 끝난 시각도 남긴다(끝 → 요청 지연).
+      const metrics = {
+        playId,
+        clip,
+        fromClip: display ? display.clip ?? 'H' : null,
+        prevEndedMs: last?.outcome === 'finished' ? last.atMs : null,
+        requestMs: startedMs,
+        waitedRewind: false,
+        seeked: false,
+        readyMs: null,
+        playingMs: null,
+        firstFrameMs: null,
+        firstFrameMediaSec: null,
+      };
+      transitions.push(metrics);
+      if (transitions.length > TRANSITION_LOG) transitions.shift();
+      const token = { playId, clip, video: null, stage: 'pending', startedMs, listeners: [], metrics };
       current = token;
       run(token);
     },
@@ -218,7 +297,8 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
       if (pose !== 'hidden' || disposed) return;
       stopCurrent('cancelled');
       for (const entry of Object.values(entries)) entry.video?.pause();
-      display = { kind: 'image', element: still.image, clip: null };
+      setDisplay({ kind: 'image', element: still.image, clip: null });
+      rewindIdle();
     },
     // 모든 영상 요소를 미리 만들어 불러온다(첫 재생 지연 줄이기).
     preload() {
@@ -257,10 +337,16 @@ export function createSeqPlayer({ clips, seqBase, safeStillUrl, stillRetryMs = 3
         display: display && { kind: display.kind, clip: display.clip },
         blocked,
         still: `${still.status}(시도 ${still.attempts})`,
+        transitions: transitions.map((t) => ({ ...t })),
         sources: Object.fromEntries(
           Object.values(entries).map((e) => [
             e.clip,
-            { readyState: e.video?.readyState ?? null, error: e.video?.error ? mediaErrorText(e.video) : e.lastError, loads: e.loads },
+            {
+              readyState: e.video?.readyState ?? null,
+              error: e.video?.error ? mediaErrorText(e.video) : e.lastError,
+              loads: e.loads,
+              rewinds: e.rewinds,
+            },
           ]),
         ),
       };

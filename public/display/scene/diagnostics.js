@@ -24,6 +24,7 @@ const ROWS = [
   ['play', '재생 ID'],
   ['player', '재생기'],
   ['shown', '화면 표시'],
+  ['transition', '최근 전환'],
   ['render', '그리기'],
   ['filter', '유화 필터'],
   ['sources', '영상 소스'],
@@ -51,9 +52,35 @@ function formatPlayer({ current, last }) {
 
 function formatSources(player) {
   return Object.entries(player.sources)
-    .map(([clip, s]) => `${clip.split('_')[0]} ${s.error ? `오류(${s.error})` : s.readyState === null ? '-' : `r${s.readyState}`}`)
+    .map(([clip, s]) => `${clip.split('_')[0]} ${s.error ? `오류(${s.error})` : s.readyState === null ? '-' : `r${s.readyState}`}${s.rewinds ? `·되감기${s.rewinds}` : ''}`)
     .concat(`H ${player.still}`)
     .join(' · ');
+}
+
+// 최근 전환 지연(ms): 이전 클립 끝 → 재생 요청 → 준비 → 재생 시작(표시 교체) → 첫 영상 프레임 → 교체 후 첫 그림.
+// 각 단계는 재생 요청 기준 경과(+ms). 첫 그림은 렌더러의 마지막 교체가 이 재생일 때만 보인다.
+function formatTransition(player, r) {
+  const list = player.transitions ?? [];
+  if (list.length === 0) return '없음';
+  const t = list[list.length - 1];
+  const rel = (v) => (v === null ? '-' : `+${Math.round(v - t.requestMs)}`);
+  const swap = r?.swap;
+  const drawnMs = swap && swap.kind === 'video' && swap.clip === t.clip && swap.atMs >= t.requestMs ? swap.drawnMs : null;
+  const origin = t.prevEndedMs ?? t.requestMs;
+  const parts = [
+    `#${t.playId} ${t.fromClip ?? '-'} → ${t.clip}`,
+    `끝→첫 그림 ${drawnMs === null ? '-' : Math.round(drawnMs - origin)} ms${t.prevEndedMs === null ? '(요청 기준)' : ''}`,
+    `끝→요청 ${t.prevEndedMs === null ? '-' : Math.round(t.requestMs - t.prevEndedMs)}`,
+    `준비 ${rel(t.readyMs)}${t.seeked ? '(탐색)' : ''}${t.waitedRewind ? '(되감기 대기)' : ''}`,
+    `재생 시작 ${rel(t.playingMs)}`,
+    `첫 영상 프레임 ${rel(t.firstFrameMs)}${t.firstFrameMediaSec === null ? '' : `(${t.firstFrameMediaSec.toFixed(3)} s)`}`,
+    `첫 그림 ${rel(drawnMs)}`,
+  ];
+  // 최근 전환들의 끝(없으면 요청) → 재생 시작 지연
+  const recent = list
+    .map((x) => (x.playingMs === null ? '-' : Math.round(x.playingMs - (x.prevEndedMs ?? x.requestMs))))
+    .join(', ');
+  return `${parts.join(' · ')} ms / 최근 끝→재생 시작: ${recent} ms`;
 }
 
 function formatErrors({ judge, seq, render, nowMs }) {
@@ -95,6 +122,7 @@ export function createDiagnostics(listEl, { note = '' } = {}) {
     const flags = [];
     if (seq.noticed) flags.push('관객 인지');
     if (seq.suspended) flags.push(`일시 중지(${suspendedBy.join(', ') || '-'})`);
+    if (seq.clueAtMs !== null) flags.push(`숨은 대기 · 단서(SC3)까지 ${Math.max(0, (seq.clueAtMs - nowMs) / 1000).toFixed(1)} s`);
     cells.phase.textContent = `${PHASE_LABELS[seq.phase]} (${seq.phase})${flags.length ? ` · ${flags.join(' · ')}` : ''}`;
     cells.play.textContent = seq.playId === null
       ? `진행 없음 · 마지막 #${seq.lastPlayId} · 무시한 늦은 알림 ${seq.ignoredCompletions}`
@@ -117,6 +145,7 @@ export function createDiagnostics(listEl, { note = '' } = {}) {
       cells.render.textContent = '렌더러 없음';
       cells.filter.textContent = '-';
     }
+    cells.transition.textContent = formatTransition(player, r);
     cells.sources.textContent = formatSources(player);
     cells.error.textContent = formatErrors({ judge, seq, render: r, nowMs });
   }
