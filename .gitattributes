@@ -1,2 +1,6 @@
-# 텍스트 파일은 UTF-8로 쓰고 저장소에는 LF로 저장한다. 바이너리는 Git이 자동 감지한다.
+# 텍스트 파일은 UTF-8로 쓰고 저장소에는 LF로 저장한다.
 * text=auto eol=lf
+
+# 실행 에셋(public/display/assets/)과 참고 이미지는 바이너리로 다룬다(줄바꿈 변환·diff 없음).
+*.mp4 binary
+*.png binary

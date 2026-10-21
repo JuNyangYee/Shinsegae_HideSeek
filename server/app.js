@@ -3,7 +3,7 @@
 // 제공 범위:
 //   - public/ 아래 정적 파일(숨김·상위 경로 차단).
 //   - /vendor/three/ 아래는 node_modules/three/build/의 고정 두 파일만(three.module.js, three.core.js). node_modules 전체는 제공하지 않는다.
-//   - /media/ 아래는 server/media.js의 고정 allowlist만(저장소 밖 원본 영상·정지 이미지, Range 지원).
+//   - /media/ 아래는 server/media.js의 고정 allowlist만(기본 public/display/assets/의 영상·정지 이미지, Range 지원).
 
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';

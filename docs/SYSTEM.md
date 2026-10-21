@@ -15,7 +15,7 @@
 - 서버(`server/`): Node 내장 `http`.
   - `server/server.js` — 실행 진입점. `127.0.0.1`에만 bind. `PORT`(기본 8091, `0`이면 빈 포트 자동 선택). 잘못된 `PORT`·사용 중 포트·권한 오류는 한국어 문구 후 종료 코드 1. 미디어 폴더·three가 없으면 시작 때 경고.
   - `server/app.js` — 요청 처리(listen하지 않음, 테스트가 import). GET/HEAD만(그 외 405), `/` → `/display/` 302, 폴더 주소는 끝 `/`로 301 후 `index.html`.
-  - `server/media.js` — 외부 미디어 allowlist·Range(8장).
+  - `server/media.js` — 미디어 allowlist·Range(8장).
 - 브라우저가 mmWave 센서를 직접 읽을 수 있다고 가정하지 않는다. 센서 인터페이스가 정해진 뒤 브라우저 API로 가능한지, 로컬 브리지가 필요한지 정한다. — 미정
 
 ## 2. 경계와 데이터 흐름
@@ -45,7 +45,7 @@
 server/
   server.js               실행 진입점(listen)
   app.js                  요청 처리(public/·three 고정 파일·미디어)
-  media.js                외부 미디어 allowlist·Range
+  media.js                미디어 allowlist·Range
 public/display/
   index.html, styles.css  9:16 무대 + 개발 패널
   main.js                 조립
@@ -54,10 +54,11 @@ public/display/
   core/                   근접 판정, 시퀀스 상태 (순수 모듈)
   scene/                  영상 재생기, 무대 렌더러, 진단
   render/                 유화 후처리(ThrowSnow 이식)
+  assets/seq/, assets/pose/ 실행 에셋(영상 7개, 안전 정지 이미지)
 test/                     근접 판정·시퀀스 상태·미디어 서버 테스트 (node:test)
 ```
 
-- 원본 영상·이미지는 저장소에 없다(8장). `docs/references/`의 참고 이미지는 실행 에셋이 아니다.
+- 실행 에셋(영상 7개, 안전 정지 이미지)은 `public/display/assets/seq/`·`pose/`에 원본 사본으로 추적한다(8장). `docs/references/`의 참고 이미지는 실행 에셋이 아니다.
 
 ## 4. 공통 근접 샘플
 
@@ -164,19 +165,24 @@ test/                     근접 판정·시퀀스 상태·미디어 서버 테�
 - **안전 정지 화면 미준비:** 안전 정지를 요청했는데 H 이미지가 아직 불러오는 중이거나 실패했으면, 이전 영상 프레임(캐릭터가 보이는 화면)을 남기지 않고 검정 가림 화면을 그린다. 실패 중이면 무대 가운데에 "안전 정지 화면(H 이미지)을 불러오지 못했습니다. 다시 시도하는 중입니다"를 보인다. 이미지가 준비되면 그 이미지로 바꾸고, 시퀀스는 이미지와 무관하게 정상 판정에 따라 진행한다. 다음 **영상** 전환은 기존대로 새 영상이 재생을 시작할 때까지 이전 프레임을 유지한다.
 - 자동 재생이 막히면 무대 가운데에 "화면을 클릭하거나 아무 키나 누르면 재생을 시작합니다"를 보이고, 사용자 조작 때 `retryNow`로 바로 다시 시도한다.
 
-## 8. 외부 에셋 제공 (`server/media.js`)
+## 8. 실행 에셋 제공 (`server/media.js`)
 
-- 원본 영상·PNG는 **저장소로 복사하거나 변환하지 않는다.** 서버가 고정 allowlist만 `/media/...` 주소에 연결한다.
+- **확정(사용자 결정, 2026-10-21):** 실행 영상 7개와 안전 정지 이미지 `H_Hidden.png`는 원본을 **변환 없이 복사해** `public/display/assets/`에 두고 Git으로 추적한다(ThrowSnow와 같은 방식, LFS 없음, `.gitattributes`에서 `*.mp4`·`*.png` binary). 프로젝트·원본 폴더 경로가 바뀌어도 실행되게 하려는 것이다. 쓰지 않는 포즈·가이드·작업 원본과 IP 원본 PDF는 복사하지 않고 출처 경로로만 참조한다.
+- 출처(참고용, 런타임 기본값 아님): 영상 `D:/2026-09_ShinsegaeChristmas/007_Assets/HideSeek_Seq_1021/`, 정지 이미지 `D:/2026-09_ShinsegaeChristmas/007_Assets/Hide_Seek/HideSeek_Snowman_Play_v02/01_Masters/H_Hidden.png`. 원본이 바뀌면 다시 복사해 커밋한다.
+- 서버가 고정 allowlist만 `/media/...` 주소에 연결한다. 표시 페이지는 이 주소만 쓴다.
 
 | 주소 | 폴더(환경 변수, 기본값) | 파일 |
 |---|---|---|
-| `/media/seq/<이름>.mp4` | `SEQ_DIR` (기본 `D:/2026-09_ShinsegaeChristmas/007_Assets/HideSeek_Seq_1021`) | SC0A_Pat, SC0B_Roll, SC0C_Playful, SC1_Notice, SC2_Duck, SC3_Hidden_Clue, SC4_Return_To_Play |
-| `/media/pose/H_Hidden.png` | `POSE_DIR` (기본 `D:/2026-09_ShinsegaeChristmas/007_Assets/Hide_Seek/HideSeek_Snowman_Play_v02/01_Masters`) | H_Hidden.png |
+| `/media/seq/<이름>.mp4` | `SEQ_DIR` (기본 `public/display/assets/seq/`) | SC0A_Pat, SC0B_Roll, SC0C_Playful, SC1_Notice, SC2_Duck, SC3_Hidden_Clue, SC4_Return_To_Play |
+| `/media/pose/H_Hidden.png` | `POSE_DIR` (기본 `public/display/assets/pose/`) | H_Hidden.png |
+
+- 기본 폴더는 `server/media.js`의 `import.meta.url` 기준으로 정한다. 프로젝트 폴더를 옮기거나 다른 cwd에서 실행해도 같다. `SEQ_DIR`·`POSE_DIR`(빈 값이면 기본)로 덮어쓸 수 있고, 상대 경로는 **실행 cwd 기준**으로 푼다.
 
 - 주소는 퍼센트 디코딩 후 표와 **글자 그대로** 같아야 한다(대소문자 포함). 표에 없는 주소, 폴더 주소(목록 없음), 상위 경로·인코딩 우회는 404.
 - 실제 파일은 `realpath`로 풀어 **그 폴더 바로 아래 같은 이름의 일반 파일**일 때만 연다. 심볼릭 링크가 폴더 밖을 가리키면 404.
 - HEAD 지원. `Range: bytes=시작-끝 | 시작- | -끝에서N` **단일 범위**만 206(`Content-Range`). 범위가 파일 밖이면 416(`Content-Range: bytes */크기`). 여러 범위·형식 오류·`If-Range` 동반은 범위를 무시하고 200 전체. `Accept-Ranges: bytes`, `Cache-Control: no-cache`, `nosniff`.
-- 이 경로는 `public/` 제공과 분리되어 있다. `docs/`, IP 원본, 저장소 밖 임의 파일은 열 수 없다.
+- `/media/`로는 allowlist 파일만 열린다. `docs/`, IP 원본, allowlist 밖 파일은 열 수 없다.
+- 에셋이 `public/` 아래에 있으므로 기존 `public/` 정적 제공 범위(숨김·상위 경로 차단)에서 `/display/assets/seq/<이름>.mp4`, `/display/assets/pose/H_Hidden.png` 직접 주소로도 열린다(ThrowSnow와 같은 노출 범위). 이 경로는 일반 정적 제공이라 Range를 지원하지 않고 `.mp4`는 `application/octet-stream`으로 나간다. 표시 페이지는 이 주소를 쓰지 않는다.
 - three: `/vendor/three/three.module.js`, `/vendor/three/three.core.js` **두 파일만** `node_modules/three/build/`에서 제공한다(import map `three` → `three.module.js`). `node_modules` 전체는 제공하지 않는다.
 - 새 영상(예: SC1b_Glance)을 쓰려면 allowlist와 `settings.js` 클립 표를 함께 고친다. 테스트가 두 목록의 일치를 확인한다.
 
@@ -218,5 +224,5 @@ test/                     근접 판정·시퀀스 상태·미디어 서버 테�
 
 ## 10. 실행과 검증 구분
 
-- 실행: `npm ci` 후 `npm start`(`http://127.0.0.1:8091/display/`), 테스트: `npm test`(`node --test`, `test/`의 근접 판정·시퀀스 상태·미디어 서버 시나리오). 미디어 서버 테스트는 임시 폴더와 임시 포트로 테스트 안에서만 서버를 띄운다.
+- 실행: `npm ci` 후 `npm start`(`http://127.0.0.1:8091/display/`), 테스트: `npm test`(`node --test`, `test/`의 근접 판정·시퀀스 상태·미디어 서버 시나리오). 미디어 서버 테스트는 임시 포트로 테스트 안에서만 서버를 띄운다(규칙 시험은 임시 폴더의 가짜 파일, 기본 경로 시험은 저장소 실행 에셋을 다른 cwd에서 HEAD·Range로 확인).
 - 모의 입력으로 확인한 동작, 실제 센서로 확인한 동작, 현장에서 확인한 동작을 구분해 기록한다. 현재는 **단위 테스트와(오케스트레이터의) 브라우저·HTTP 확인까지**이며 실제 센서·현장 수치·장시간 동작·설치 PC GPU 성능은 미검증이다. 검증 내역은 최신 로그를 따른다.

@@ -11,7 +11,7 @@ mmWave 센서로 관객이 가까워지면 캐릭터들이 숨고, 멀어지면 
 ```sh
 npm ci           # three 0.186.1 설치(유일한 런타임 의존성)
 npm start        # http://127.0.0.1:8091/display/ (루트 / 는 이 주소로 이동)
-npm test         # 근접 판정·시퀀스 상태·외부 미디어 서버 테스트(node:test)
+npm test         # 근접 판정·시퀀스 상태·미디어 서버 테스트(node:test)
 ```
 
 - 포트 변경: `PORT=8092 npm start` (PowerShell: `$env:PORT=8092; npm start`). `PORT=0`이면 빈 포트를 자동으로 고르고 실제 주소를 출력합니다.
@@ -19,14 +19,16 @@ npm test         # 근접 판정·시퀀스 상태·외부 미디어 서버 테�
 
 ## 영상·이미지 경로
 
-원본은 저장소에 복사하지 않고 서버가 외부 폴더에서 고정 목록만 `/media/...` 주소로 제공합니다.
+실행에 쓰는 영상 7개와 안전 정지 이미지 1개는 **저장소에 포함**되어 있습니다(사용자 결정, 2026-10-21 — 프로젝트·원본 폴더 경로가 바뀌어도 그대로 실행되도록). 원본을 변환 없이 복사했고, 서버가 고정 목록만 `/media/...` 주소로 제공합니다.
 
-| 환경 변수 | 기본 경로(이 PC) | 쓰는 파일 |
+| 환경 변수 | 기본 경로(프로젝트 기준) | 쓰는 파일 |
 |---|---|---|
-| `SEQ_DIR` | `D:/2026-09_ShinsegaeChristmas/007_Assets/HideSeek_Seq_1021` | `SC0A_Pat`·`SC0B_Roll`·`SC0C_Playful`·`SC1_Notice`·`SC2_Duck`·`SC3_Hidden_Clue`·`SC4_Return_To_Play` `.mp4` |
-| `POSE_DIR` | `D:/2026-09_ShinsegaeChristmas/007_Assets/Hide_Seek/HideSeek_Snowman_Play_v02/01_Masters` | `H_Hidden.png`(안전 정지 화면) |
+| `SEQ_DIR` | `public/display/assets/seq/` | `SC0A_Pat`·`SC0B_Roll`·`SC0C_Playful`·`SC1_Notice`·`SC2_Duck`·`SC3_Hidden_Clue`·`SC4_Return_To_Play` `.mp4` |
+| `POSE_DIR` | `public/display/assets/pose/` | `H_Hidden.png`(안전 정지 화면) |
 
-다른 PC에서는 `SEQ_DIR=... POSE_DIR=... npm start`로 바꿉니다. 폴더가 없으면 시작 때 경고를 출력하고 해당 주소는 404입니다.
+- 기본 경로는 `server/media.js` 파일 위치 기준이라 실행 위치(cwd)와 무관합니다.
+- 다른 폴더의 영상을 시험할 때만 `SEQ_DIR=... POSE_DIR=... npm start`로 덮어씁니다. 상대 경로는 **실행 cwd 기준**으로 풉니다. 폴더가 없으면 시작 때 경고를 출력하고 해당 주소는 404입니다.
+- 출처(원본 위치, 참고용): 영상 `D:/2026-09_ShinsegaeChristmas/007_Assets/HideSeek_Seq_1021`, 정지 이미지 `D:/2026-09_ShinsegaeChristmas/007_Assets/Hide_Seek/HideSeek_Snowman_Play_v02/01_Masters/H_Hidden.png`. 원본이 바뀌면 다시 복사해 커밋합니다.
 
 ## 화면과 조작
 
@@ -51,6 +53,6 @@ npm test         # 근접 판정·시퀀스 상태·외부 미디어 서버 테�
 |---|---|
 | [AGENTS.md](AGENTS.md) | AI 에이전트 작업 지침(역할, 검수, 검증, Git·worktree, 로그) |
 | [docs/PROJECT.md](docs/PROJECT.md) | 목표, 체험 흐름(v02 스토리), 범위, 캐릭터·IP 참고, 단계 계획, 결정 필요 항목 |
-| [docs/SYSTEM.md](docs/SYSTEM.md) | 기술 명세(구조, 3구간 판정, 상태·경계·오류, 외부 에셋, 유화 필터 출처·설정) |
+| [docs/SYSTEM.md](docs/SYSTEM.md) | 기술 명세(구조, 3구간 판정, 상태·경계·오류, 실행 에셋 제공, 유화 필터 출처·설정) |
 | [docs/references/](docs/references/) | 사용자 제공 캐릭터 참고 이미지(실행 에셋 아님) |
 | [docs/logs/](docs/logs/) | 작업 로그와 인계 |

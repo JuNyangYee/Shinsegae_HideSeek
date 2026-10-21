@@ -1,15 +1,17 @@
-// 외부 에셋 제공: 저장소 밖의 원본 영상·정지 이미지를 고정 allowlist로만 /media/... 주소에 연결한다.
-// 원본은 저장소로 복사하거나 변환하지 않는다. 폴더 목록·allowlist 밖 파일·상위 경로·심볼릭 링크로 바깥을 가리키는 파일은 404.
+// 미디어 제공: 실행용 영상·정지 이미지를 고정 allowlist로만 /media/... 주소에 연결한다.
+// 기본은 저장소에 포함한 public/display/assets/ 아래 원본 사본(변환 없음). 환경 변수로 다른 폴더를 가리킬 수 있다.
+// 폴더 목록·allowlist 밖 파일·상위 경로·심볼릭 링크로 바깥을 가리키는 파일은 404.
 // 영상 탐색을 위해 HEAD와 단일 bytes Range(206 / 416)를 지원한다.
 
 import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-// 이 PC의 기본 경로(환경 변수로 덮어씀). 제공 영상: HideSeek_Seq_1021, 정지 이미지: Hide_Seek v02 01_Masters.
+// 기본 경로: 이 파일 위치 기준(프로젝트 폴더를 옮기거나 다른 cwd에서 실행해도 같다). 환경 변수로 덮어씀.
 export const DEFAULT_MEDIA_DIRS = Object.freeze({
-  seq: 'D:/2026-09_ShinsegaeChristmas/007_Assets/HideSeek_Seq_1021',
-  pose: 'D:/2026-09_ShinsegaeChristmas/007_Assets/Hide_Seek/HideSeek_Snowman_Play_v02/01_Masters',
+  seq: path.resolve(fileURLToPath(new URL('../public/display/assets/seq/', import.meta.url))),
+  pose: path.resolve(fileURLToPath(new URL('../public/display/assets/pose/', import.meta.url))),
 });
 
 // 환경 변수 이름(폴더 묶음 → 변수).
@@ -32,7 +34,7 @@ export const MEDIA_PATHS = Object.freeze(Object.keys(ALLOWLIST));
 
 const MEDIA_TYPES = { '.mp4': 'video/mp4', '.png': 'image/png' };
 
-// env → { seq, pose } 절대 경로.
+// env → { seq, pose } 절대 경로. 환경 변수의 상대 경로는 실행 cwd 기준으로 푼다.
 export function resolveMediaDirs(env = process.env) {
   const out = {};
   for (const [root, name] of Object.entries(MEDIA_ENV)) {

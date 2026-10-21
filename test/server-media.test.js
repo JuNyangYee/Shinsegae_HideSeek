@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, symlink, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, open, rm, stat, symlink, writeFile, mkdir } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
 import { createRequestListener } from '../server/app.js';
-import { MEDIA_PATHS, parseRange } from '../server/media.js';
+import { MEDIA_PATHS, parseRange, resolveMediaDirs } from '../server/media.js';
 import { SETTINGS } from '../public/display/config/settings.js';
 
 // 임시 폴더에 가짜 미디어를 만들고 이 테스트 안에서만 임시 포트로 서버를 띄운다(앱 서버를 따로 실행하지 않음).
@@ -103,4 +104,66 @@ test('표시 페이지의 영상·정지 이미지 주소는 모두 서버 allow
     if (def.file) assert.ok(MEDIA_PATHS.includes(`${SETTINGS.media.seqBase}${def.file}`), def.file);
   }
   assert.ok(MEDIA_PATHS.includes(SETTINGS.media.safeStillUrl));
+});
+
+// 저장소에 포함한 실행 에셋(public/display/assets/). 테스트 파일 위치로 기대 경로를 따로 계산한다.
+const ASSET_DIRS = {
+  seq: path.resolve(fileURLToPath(new URL('../public/display/assets/seq/', import.meta.url))),
+  pose: path.resolve(fileURLToPath(new URL('../public/display/assets/pose/', import.meta.url))),
+};
+
+test('기본 미디어 폴더는 실행 cwd와 무관하게 저장소 public/display/assets/이고, 환경 변수 덮어쓰기는 유지된다', () => {
+  const cwd = process.cwd();
+  try {
+    process.chdir(os.tmpdir());
+    assert.deepEqual(resolveMediaDirs({}), ASSET_DIRS);
+    assert.deepEqual(resolveMediaDirs({ SEQ_DIR: '', POSE_DIR: '' }), ASSET_DIRS);
+    // 덮어쓰기: 절대 경로는 그대로, 상대 경로는 실행 cwd 기준.
+    assert.deepEqual(resolveMediaDirs({ SEQ_DIR: dir, POSE_DIR: 'rel-pose' }), {
+      seq: path.resolve(dir),
+      pose: path.resolve(os.tmpdir(), 'rel-pose'),
+    });
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test('기본 핸들러(환경 변수 없음, 다른 cwd)로 저장소 에셋 8개가 HEAD 200, 영상 Range는 206으로 원본 바이트', async () => {
+  const cwd = process.cwd();
+  const saved = { SEQ_DIR: process.env.SEQ_DIR, POSE_DIR: process.env.POSE_DIR };
+  let listener;
+  try {
+    delete process.env.SEQ_DIR;
+    delete process.env.POSE_DIR;
+    process.chdir(os.tmpdir());
+    listener = createRequestListener();
+  } finally {
+    process.chdir(cwd);
+    for (const [k, v] of Object.entries(saved)) if (v !== undefined) process.env[k] = v;
+  }
+  const local = http.createServer(listener);
+  await new Promise((resolve) => local.listen(0, '127.0.0.1', resolve));
+  const at = `http://127.0.0.1:${local.address().port}`;
+  try {
+    for (const url of MEDIA_PATHS) {
+      const [, , root, file] = url.split('/'); // /media/<root>/<file>
+      const { size } = await stat(path.join(ASSET_DIRS[root], file));
+      const head = await fetch(`${at}${url}`, { method: 'HEAD' });
+      assert.equal(head.status, 200, url);
+      assert.equal(head.headers.get('content-length'), String(size), url);
+    }
+    const file = path.join(ASSET_DIRS.seq, 'SC0A_Pat.mp4');
+    const expected = Buffer.alloc(16);
+    const fh = await open(file);
+    try {
+      await fh.read(expected, 0, 16, 0);
+    } finally {
+      await fh.close();
+    }
+    const part = await fetch(`${at}/media/seq/SC0A_Pat.mp4`, { headers: { Range: 'bytes=0-15' } });
+    assert.equal(part.status, 206);
+    assert.deepEqual(Buffer.from(await part.arrayBuffer()), expected);
+  } finally {
+    await new Promise((resolve) => local.close(resolve));
+  }
 });

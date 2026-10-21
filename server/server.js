@@ -1,5 +1,5 @@
-// 로컬 서버 실행 진입점: 127.0.0.1에서 public/·three 고정 파일·외부 미디어 allowlist를 제공한다(요청 처리는 server/app.js).
-// 실행: npm start (PORT 환경 변수로 포트 변경, 기본 8091, 0이면 빈 포트 자동 선택. SEQ_DIR·POSE_DIR로 미디어 폴더 변경)
+// 로컬 서버 실행 진입점: 127.0.0.1에서 public/·three 고정 파일·미디어 allowlist를 제공한다(요청 처리는 server/app.js).
+// 실행: npm start (PORT 환경 변수로 포트 변경, 기본 8091, 0이면 빈 포트 자동 선택. SEQ_DIR·POSE_DIR로 미디어 폴더 변경, 기본은 public/display/assets/)
 
 import { access } from 'node:fs/promises';
 import http from 'node:http';
