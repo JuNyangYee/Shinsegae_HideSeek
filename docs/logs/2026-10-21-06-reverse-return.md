@@ -184,7 +184,8 @@ root가 원본 SC0A/B/C·SC1·SC2·SC4의 0.5초 간격 컨택트 시트(저장�
 ## 인계
 
 - 브랜치 `task/smooth-sequence-transitions`, 기준 master `08ac107`, worktree `C:/Users/User/.paseo/worktrees/0wbs9g4q/task-smooth-sequence-transitions`.
-- 상태: 구현·관련 테스트·필요한 브라우저 확인·간단 검수·권장 문구 정정 완료. root 커밋 및 master 통합 예정(실제 결과는 후속 기록).
+- 상태: 구현·관련 테스트·필요한 브라우저 확인·간단 검수·권장 문구 정정 완료. root가 구현 커밋 `ef31d23`을 만들고 clean 상태의 통합 checkout `D:/2026-09_ShinsegaeChristmas/006_Works/001_HideSeek`에서 master `08ac107` → `ef31d23`으로 `--ff-only` 병합했다. `git push origin master` 성공. 이 통합 결과는 후속 문서 커밋으로 남긴다.
+- 작업 브랜치와 worktree는 보존했다. 통합 기록 외 코드 변경·테스트 재실행은 하지 않았다.
 - 남은 이슈·한계:
   - 반전 직후 새 영상이 탐색·준비되는 동안 이전 프레임을 유지한다(위 실제 관측값 참고, 현장 성능 보장 아님).
   - 반전 timeout은 상한값이다.
