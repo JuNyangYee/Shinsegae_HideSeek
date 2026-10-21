@@ -87,6 +87,13 @@ IDLE 전환 경로: 이전 클립 `ended` → 코어 `playbackFinished` → 재�
 ## 인계
 
 - 브랜치 `task/smooth-sequence-transitions`, 기준 master `d545900`, worktree `C:/Users/User/.paseo/worktrees/0wbs9g4q/task-smooth-sequence-transitions`.
-- 상태: 구현·간단 검수·필요 수정·브라우저 확인 완료. 오케스트레이터 커밋 및 master 통합 예정(결과는 아래 통합 기록에 추가).
+- 상태: 구현·간단 검수·필요 수정·브라우저 확인 완료. 구현 커밋 `4d454bc`를 master에 fast-forward 병합하고 origin/master에 push 완료.
 - 남은 이슈: rAF가 낮은 원인 미확정, 설치 화면의 체감과 반응 지연 허용 여부·숨은 단서 간격 미정(PROJECT 7장), `AGENTS.md` 에셋 규칙 갱신 미반영(이전 로그의 기지 제약, 이번 범위 밖).
 - 다음 단계: 설치 화면에서 연결 체감과 최대 약 8초의 거리 반응 지연을 확인하고 필요할 때 해당 항목만 조정한다.
+
+## 통합 기록
+
+- 구현 커밋: `4d454bc` (`fix: 시퀀스 경계 전환과 IDLE 연결 개선`). 작업 worktree에서 새 테스트·로그를 포함한 staged diff check 통과 후 커밋했다.
+- 통합 checkout: `D:/2026-09_ShinsegaeChristmas/006_Works/001_HideSeek`, 실제 브랜치 `master`, 병합 전 clean 확인. fetch 후 origin/master와 차이 0/0을 확인했다.
+- `git merge --ff-only task/smooth-sequence-transitions` 성공: `d545900` → `4d454bc`. `git push origin master` 성공, master와 origin/master 일치·clean 확인.
+- 이 통합 기록은 별도 문서 커밋으로 남긴다. 기존 브랜치·worktree는 보존했다.
