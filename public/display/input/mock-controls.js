@@ -1,15 +1,15 @@
 // 모의 입력 조작부(개발용): 페이지 컨트롤과 단축키를 모의 입력 어댑터 호출로 바꾼다.
-// 판정·시퀀스 코어에는 DOM 이벤트를 넘기지 않는다.
+// 판정·시퀀스 코어에는 DOM 이벤트를 넘기지 않는다. 유화(O)·패널(D) 키는 부르는 쪽 콜백으로 넘긴다.
 
 const MODE_LABELS = { ok: '정상 감지', 'no-target': '감지 없음', error: '입력 오류' };
 
 // 글자·범위 입력을 조작하는 중에는 단축키를 가로채지 않는다.
 function isEditingTarget(target) {
   return target instanceof Element
-    && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null;
+    && target.closest('input:not([type="checkbox"]), textarea, select, [contenteditable]:not([contenteditable="false"])') !== null;
 }
 
-export function bindMockControls(mock, settings, { root = document, onToggleDiagnostics } = {}) {
+export function bindMockControls(mock, settings, { root = document, onTogglePanel, onToggleOil } = {}) {
   const slider = root.getElementById('distance');
   const distanceOut = root.getElementById('distance-value');
   const modeOut = root.getElementById('input-mode');
@@ -23,7 +23,7 @@ export function bindMockControls(mock, settings, { root = document, onToggleDiag
   function refresh() {
     const { distanceM, mode, sending } = mock.getState();
     slider.value = String(distanceM);
-    distanceOut.textContent = `${distanceM.toFixed(1)} m`;
+    distanceOut.textContent = `${distanceM.toFixed(2)} m`;
     modeOut.textContent = `${MODE_LABELS[mode]} · ${sending ? '전송 중' : '전송 중단'}`;
     modeOut.dataset.mode = sending ? mode : 'stopped';
     for (const button of buttons) {
@@ -33,9 +33,15 @@ export function bindMockControls(mock, settings, { root = document, onToggleDiag
     }
   }
 
+  // 거리 프리셋은 정상 감지로 돌린다(감지 없음·입력 오류 중에 눌러도 그 거리가 보내지게).
+  const preset = (m) => () => {
+    mock.setDistance(m);
+    mock.setMode('ok');
+  };
   const actions = {
-    near: () => mock.setDistance(settings.nearPresetM),
-    far: () => mock.setDistance(settings.farPresetM),
+    near: preset(settings.nearPresetM),
+    mid: preset(settings.midPresetM),
+    far: preset(settings.farPresetM),
     'no-target': () => mock.setMode('no-target'),
     error: () => mock.setMode('error'),
     stop: () => mock.stop(),
@@ -60,8 +66,10 @@ export function bindMockControls(mock, settings, { root = document, onToggleDiag
     if (event.isComposing || isEditingTarget(event.target)) return;
     // 한글 입력 상태에서도 같은 자리의 키로 동작하도록 물리 키(code)로 본다.
     if (event.code === 'KeyN') run('near');
+    else if (event.code === 'KeyM') run('mid');
     else if (event.code === 'KeyF') run('far');
-    else if (event.code === 'KeyD') onToggleDiagnostics?.();
+    else if (event.code === 'KeyO') onToggleOil?.();
+    else if (event.code === 'KeyD') onTogglePanel?.();
     else return;
     event.preventDefault();
   });

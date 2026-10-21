@@ -1,12 +1,16 @@
-// 근접 판정: 공통 근접 샘플 → 안정화된 near / far / unknown.
+// 근접 판정: 공통 근접 샘플 → 안정화된 far / mid / near / unknown.
 // DOM·타이머 없는 순수 모듈이다. 현재 시각(nowMs)은 호출하는 쪽이 넣는다.
 //
 // 공통 근접 샘플: { source, timestampMs, status: 'ok' | 'no-target' | 'error', distanceM? }
 // - timestampMs: 페이지 단조 시계(performance.now()) 기준 ms
 // - distanceM: status가 'ok'일 때만, 0 이상의 m
+// - no-target(장치 정상, 감지 대상 없음)은 원거리(far) 구역 샘플로 본다(v02: 입력 없음 = 기본 놀이).
+// - error·stale(샘플 끊김)은 unknown(안전 정지)이다. no-target과 섞지 않는다.
 
-export const DECISIONS = Object.freeze(['unknown', 'near', 'far']);
+export const DECISIONS = Object.freeze(['unknown', 'far', 'mid', 'near']);
 const STATUSES = new Set(['ok', 'no-target', 'error']);
+// 가까운 정도(클수록 가깝다). unknown은 순서가 없다.
+const RANK = Object.freeze({ far: 0, mid: 1, near: 2 });
 
 // 샘플이 규격에 맞지 않으면 거절 사유를, 맞으면 null을 돌려준다.
 export function validateSample(sample) {
@@ -21,11 +25,31 @@ export function validateSample(sample) {
   return null;
 }
 
+// 거리 → 구역. current(지금 안정 판정)보다 가까운 쪽에서 멀어질 때만 경계에 retreatMarginM을 더한다.
+//   near/mid 경계: current가 near면 거리 < nearBelowM + 여유 → near, 아니면 거리 < nearBelowM → near.
+//   mid/far 경계: current가 near·mid면 거리 > farAboveM + 여유 → far, 아니면(far·unknown) 거리 > farAboveM → far.
+export function zoneOf(distanceM, current, cfg) {
+  const margin = cfg.retreatMarginM;
+  const nearLimit = current === 'near' ? cfg.nearBelowM + margin : cfg.nearBelowM;
+  const farLimit = current === 'near' || current === 'mid' ? cfg.farAboveM + margin : cfg.farAboveM;
+  if (distanceM < nearLimit) return 'near';
+  if (distanceM > farLimit) return 'far';
+  return 'mid';
+}
+
+// 후보 zone이 판정이 되기까지의 유지 시간. 더 가까워지면 approachHoldMs, 더 멀어지거나 unknown에서 회복하면 retreatHoldMs.
+export function holdMsFor(zone, current, cfg) {
+  if (current !== 'unknown' && RANK[zone] > RANK[current]) return cfg.approachHoldMs;
+  return cfg.retreatHoldMs;
+}
+
 export function createProximityJudge(cfg) {
-  if (!(cfg.nearMaxM < cfg.farMinM)) throw new Error('nearMaxM은 farMinM보다 작아야 한다');
+  if (!(cfg.nearBelowM + cfg.retreatMarginM < cfg.farAboveM)) {
+    throw new Error('nearBelowM + retreatMarginM은 farAboveM보다 작아야 한다');
+  }
 
   let decision = 'unknown';
-  let candidate = null; // { zone: 'near' | 'far', sinceMs, lastMs }
+  let candidate = null; // { zone, sinceMs, lastMs }
   let lastSample = null; // 마지막으로 받아들인 샘플
   let stale = false;
   let lastRejection = null; // { reason, atMs }
@@ -39,16 +63,6 @@ export function createProximityJudge(cfg) {
   function goUnknown() {
     candidate = null;
     return setDecision('unknown');
-  }
-
-  function zoneOf(distanceM) {
-    if (distanceM <= cfg.nearMaxM) return 'near';
-    if (distanceM >= cfg.farMinM) return 'far';
-    return 'between';
-  }
-
-  function holdMsFor(zone) {
-    return zone === 'near' ? cfg.nearHoldMs : cfg.farHoldMs;
   }
 
   function reject(reason, nowMs) {
@@ -85,21 +99,16 @@ export function createProximityJudge(cfg) {
       goUnknown();
       return result(decision !== before);
     }
-    if (sample.status === 'no-target') {
-      // 임시 정책: 이전 안정 판정을 유지하고(unknown이면 unknown), 진행 중 후보만 끊는다.
-      candidate = null;
-      return result(decision !== before);
-    }
 
-    const zone = zoneOf(sample.distanceM);
-    if (zone === 'between' || zone === decision) {
-      // 사이 구간은 이전 판정 유지, 같은 판정 구간이면 바꿀 것이 없다. 어느 쪽이든 반대 후보는 끊긴다.
+    const zone = sample.status === 'no-target' ? 'far' : zoneOf(sample.distanceM, decision, cfg);
+    if (zone === decision) {
+      // 지금 판정과 같은 구역이면 바꿀 것이 없고, 다른 구역 후보는 끊긴다.
       candidate = null;
-      return result(decision !== before);
+      return result(false);
     }
     if (!candidate || candidate.zone !== zone) candidate = { zone, sinceMs: ts, lastMs: ts };
     candidate.lastMs = ts;
-    if (ts - candidate.sinceMs >= holdMsFor(zone)) {
+    if (ts - candidate.sinceMs >= holdMsFor(zone, decision, cfg)) {
       candidate = null;
       setDecision(zone);
     }
@@ -124,7 +133,7 @@ export function createProximityJudge(cfg) {
       candidate: candidate && {
         zone: candidate.zone,
         heldMs: candidate.lastMs - candidate.sinceMs,
-        requiredMs: holdMsFor(candidate.zone),
+        requiredMs: holdMsFor(candidate.zone, decision, cfg),
       },
       lastSample,
       lastSampleAgeMs: lastSample ? nowMs - lastSample.timestampMs : null,
