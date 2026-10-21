@@ -10,8 +10,8 @@
 //     늦게 시작된 영상이 지금 재생이 아니면 바로 멈춘다(숨김·안전 정지 중에 영상이 혼자 진행하지 않게).
 //   - 다음 클립이 실제로 재생을 시작할 때까지 이전 화면(멈춘 마지막 프레임 또는 H 정지 이미지)을 그대로 둔다(검은 화면 방지).
 //     play의 blendMs > 0이고 지금 보이는 것이 다른 영상이면, 새 영상이 재생을 시작할 때 display에 blendFrom(멈춘 이전 영상)·blendMs를
-//     실어 렌더러가 짧게 섞게 한다(새 영상은 그동안에도 재생 — 정지 시간 추가 없음). 섞는 시간은 코어가 정한다(자연 전환 150 ms,
-//     거리로 도중에 바꾸는 강제 전환 200 ms, 임시값). 같은 영상 재시작·H 이미지에서 시작은 섞지 않고, 안전 정지(H)는 바로 덮는다.
+//     실어 렌더러가 짧게 섞게 한다(새 영상은 그동안에도 재생 — 정지 시간 추가 없음). 섞는 시간은 코어가 정한다(naturalBlendMs 150 ms,
+//     정/역 반전 0, 임시값). 같은 영상 재시작·H 이미지에서 시작은 섞지 않고, 안전 정지(H)는 바로 덮는다.
 //   - 불러오기·탐색·재생 오류는 그 재생의 오류로 알린다. 오류가 난 영상 요소는 다음 재생 때 새로 만든다(재시도).
 //   - 자동 재생이 막히면(NotAllowedError) 'autoplay-blocked' 오류로 알리고 blocked를 켠다 — 사용자 조작 뒤 clearBlocked()로 푼다.
 //   - 안전 정지 이미지(H)는 실패하면 stillRetryMs마다 새 <img>로 다시 불러온다. 시도마다 세대 번호를 두어 이전 시도의 늦은 load·error는 무시한다.
@@ -25,6 +25,12 @@
 //     정한다 — 보이는 것이 짝 영상이면 프레임 대응 지점(mirrorStartSec), 같은 영상이면 그 프레임, 둘 다 아니면(아직 짝이 화면에
 //     나오기 전) 모두 숨은 자세의 시각(hiddenSec). 요청됐지만 아직 준비 중인 영상은 보이는 것이 아니므로 기준으로 쓰지 않는다.
 //     새 영상이 그 지점에서 재생을 시작할 때까지 이전 프레임을 유지한다(섞지 않음).
+//   - 자세 연결 구간(clips[].cues): 코어가 watchCues(playId, target)로 지켜볼 목적을 주면, **재생이 실제로 시작된 뒤** 그 영상의
+//     currentTime이 목적에 맞는 구간 [fromSec, toSec] 안일 때 onCue(playId, target, via)로 알린다(구간마다 한 번). 확인은 timeupdate와,
+//     다음 구간 시작까지 남은 영상 시간만큼의 한 번짜리 타이머(아직이면 다시 잼)로 한다 — 고빈도 폴링 없음. 준비·탐색 중이거나
+//     시작 전에는 판단하지 않는다(로딩 시간·탐색 전 위치로 전환하지 않음). 늦게 확인해 구간을 통째로 지났으면 그 구간은 건너뛰고
+//     다음 구간이나 정상 out에서 처리한다. 영상이 멈추거나(stall) 시각이 그대로면 구간 밖에서는 알리지 않고 다시 잴 뿐이다.
+//     취소·교체·목적 변경(target null 포함) 뒤의 늦은 확인은 재생 토큰으로 막는다. 전환 여부는 코어가 다시 검증한다.
 //   - 진단: 최근 전환마다 이전 클립 끝 → 재생 요청 → 준비(탐색) → 재생 시작(표시 교체) → 첫 영상 프레임 시각을 남긴다.
 
 const HAVE_METADATA = 1;
@@ -32,12 +38,23 @@ const HAVE_CURRENT_DATA = 2;
 const TRANSITION_LOG = 6; // 진단용으로 남기는 최근 전환 수
 const POS_EPS_SEC = 0.02; // 시작 위치 비교 허용(24fps 한 프레임의 절반 미만)
 const OUT_TIMER_MIN_MS = 20; // out 확인 타이머 최소 간격
+const CUE_TIMER_MIN_MS = 20; // 연결 구간 확인 타이머 최소 간격(구간 시작 직전 여러 번 깨지 않게)
+const CUE_STALL_RECHECK_MS = 250; // 영상 시각이 지난 확인 때와 같으면(멈춤·버퍼링) 이 간격으로만 다시 본다(timeupdate 수준)
 
 // 편집 구간: inSec(기본 0), outSec(없거나 inSec 이하이면 원본 끝 = null).
 export function editRange(def) {
   const inSec = Number.isFinite(def.inSec) && def.inSec > 0 ? def.inSec : 0;
   const outSec = Number.isFinite(def.outSec) && def.outSec > inSec ? def.outSec : null;
   return { inSec, outSec };
+}
+
+// 연결 구간 정리: { fromSec, toSec, targets(없으면 모든 목적) } — 시작 순으로, 잘못된 구간은 버린다.
+export function normalizeCues(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((c) => Number.isFinite(c?.fromSec) && Number.isFinite(c?.toSec) && c.toSec >= c.fromSec)
+    .map((c) => ({ fromSec: c.fromSec, toSec: c.toSec, targets: Array.isArray(c.targets) && c.targets.length ? [...c.targets] : null }))
+    .sort((a, b) => a.fromSec - b.fromSec);
 }
 
 // 프레임 번호(그 시각에 보이는 프레임 = 시작 PTS가 그 시각 이하인 마지막 프레임). 부동소수 오차로 앞 프레임이 되지 않게 아주 작은 여유.
@@ -58,6 +75,7 @@ function mediaErrorText(video) {
   return code === undefined ? 'media-error' : `media-error-${code}`;
 }
 
+// onCue(playId, target, via): 지켜보던 재생이 target 연결 구간 안에 있다(via = { clip, atSec, fromSec, toSec }).
 // onDisplayChange(): display가 바뀐 직후(렌더러가 바로 그리게). isShown(element): 렌더러가 아직 그 요소를 쓰는가(그리는 중·섞는 중 — 미리 되감기 제외).
 // createVideoElement·createImage: 테스트에서 가짜 미디어 요소를 넣을 때만 바꾼다.
 export function createSeqPlayer({
@@ -67,6 +85,7 @@ export function createSeqPlayer({
   stillRetryMs = 3000,
   onFinished,
   onError,
+  onCue = () => {},
   onDisplayChange = () => {},
   isShown = () => false,
   now = () => performance.now(),
@@ -80,6 +99,7 @@ export function createSeqPlayer({
     entries[clip] = {
       clip, url: `${seqBase}${def.file}`, ...editRange(def),
       mirror: def.mirrorOf ? { of: def.mirrorOf, frames: def.frames, fps: def.fps, hiddenSec: def.hiddenSec } : null,
+      cues: normalizeCues(def.cues),
       video: null, loads: 0, rewinds: 0, lastError: null,
     };
   }
@@ -212,6 +232,46 @@ export function createSeqPlayer({
     token.listeners = [];
     clearTimeout(token.outTimer);
     token.outTimer = null;
+    clearTimeout(token.cueTimer);
+    token.cueTimer = null;
+  }
+
+  // ── 자세 연결 구간 ──
+  const cueFits = (cue, target) => cue.targets === null || cue.targets.includes(target);
+  // 지켜보는 목적이 있고 실제로 재생 중일 때만 위치를 본다(준비·탐색 중·시작 전 제외). 구간 안이면 알린다(구간마다 한 번).
+  function checkCue(token) {
+    if (!isCurrent(token) || token.cueTarget === null || token.stage !== 'playing') return;
+    const video = token.video;
+    if (video.seeking) return;
+    const entry = entries[token.clip];
+    const t = video.currentTime;
+    for (const [index, cue] of entry.cues.entries()) {
+      if (token.cueFired.has(index) || !cueFits(cue, token.cueTarget)) continue;
+      if (t < cue.fromSec || t > cue.toSec) continue;
+      token.cueFired.add(index);
+      const via = { clip: token.clip, atSec: t, fromSec: cue.fromSec, toSec: cue.toSec };
+      token.metrics.cue = via;
+      onCue(token.playId, token.cueTarget, via); // 코어가 다시 검증한다 — 이어지면 이 토큰은 교체된다
+      return;
+    }
+  }
+  // 다음(아직 오지 않은) 맞는 구간 시작까지 남은 영상 시간만큼 뒤에 한 번 확인한다. 없으면 정상 out을 기다린다.
+  function armCue(token) {
+    clearTimeout(token.cueTimer);
+    token.cueTimer = null;
+    if (!isCurrent(token) || token.cueTarget === null || token.stage !== 'playing') return;
+    const video = token.video;
+    const t = video.currentTime;
+    const next = entries[token.clip].cues.find((c, i) => !token.cueFired.has(i) && cueFits(c, token.cueTarget) && c.toSec >= t);
+    if (!next) return;
+    const stalled = token.cueLastSec === t; // 지난 확인 뒤로 영상이 진행하지 않음
+    token.cueLastSec = t;
+    const waitMs = Math.max(stalled ? CUE_STALL_RECHECK_MS : CUE_TIMER_MIN_MS, ((next.fromSec - t) / (video.playbackRate || 1)) * 1000);
+    token.cueTimer = setTimeout(() => {
+      token.cueTimer = null;
+      checkCue(token);
+      armCue(token); // 아직이거나(멈춤) 이 구간을 지나쳤으면 다음 구간으로
+    }, waitMs);
   }
 
   // 정상 완료(out 도달 또는 ended) — 재생마다 한 번만 알린다.
@@ -287,6 +347,7 @@ export function createSeqPlayer({
       const onMediaError = () => fail(token, mediaErrorText(video));
       token.listeners = [['ended', onEnded], ['error', onMediaError]];
       if (entry.outSec !== null) token.listeners.push(['timeupdate', () => checkOut(token, entry)]);
+      if (entry.cues.length > 0) token.listeners.push(['timeupdate', () => checkCue(token)]);
       for (const [type, fn] of token.listeners) video.addEventListener(type, fn);
       token.stage = 'starting';
       video.playbackRate = 1;
@@ -321,6 +382,11 @@ export function createSeqPlayer({
       m.blended = blendFrom !== null;
       setDisplay({ kind: 'video', element: video, clip: token.clip, blendFrom, blendMs: blendFrom ? token.blendMs : 0 });
       rewindIdle();
+      // 시작 전에 연결 대기가 왔으면 첫 실제 영상 위치부터 판단한다.
+      if (token.cueTarget !== null && isCurrent(token)) {
+        checkCue(token);
+        armCue(token);
+      }
     } catch (error) {
       fail(token, error?.message || 'load-failed');
     } finally {
@@ -357,9 +423,10 @@ export function createSeqPlayer({
   }
 
   return {
-    // 새 클립 재생. 진행 중 재생은 교체(취소)된다. blendMs > 0이면 지금 보이는 (다른) 영상과 짧게 섞는다(forced = 거리로 도중에 바꿈, 진단용).
+    // 새 클립 재생. 진행 중 재생은 교체(취소)된다. blendMs > 0이면 지금 보이는 (다른) 영상과 짧게 섞는다.
     // mirror면 정/역 짝의 대응 지점부터 시작한다(시작 지점은 취소·되감기 전에, 지금 보이는 프레임으로 정함).
-    play({ playId, clip, blendMs = 0, forced = false, mirror = false }) {
+    // via: 연결 구간에서 이어졌으면 그 구간·실제 위치(진단용).
+    play({ playId, clip, blendMs = 0, mirror = false, via = null }) {
       if (disposed) return;
       const mirrorEntry = mirror && entries[clip]?.mirror ? entries[clip] : null;
       const start = mirrorEntry ? mirrorStart(mirrorEntry) : null;
@@ -381,7 +448,8 @@ export function createSeqPlayer({
         firstFrameMs: null,
         firstFrameMediaSec: null,
         blendMs,
-        forced,
+        via,
+        cue: null,
         mirror: start ? `${start.from} → ${start.sec.toFixed(3)} s` : null,
         blended: false,
         endedBy: null,
@@ -390,10 +458,24 @@ export function createSeqPlayer({
       if (transitions.length > TRANSITION_LOG) transitions.shift();
       const token = {
         playId, clip, video: null, stage: 'pending', startedMs, listeners: [], metrics, blendFrom, blendMs, outTimer: null,
+        cueTarget: null, cueFired: new Set(), cueTimer: null, cueLastSec: null,
         startSec: start ? start.sec : null,
       };
       current = token;
       run(token);
+    },
+    // 연결 구간 지켜보기: target(다음 단계) 또는 null(그만). 지금 재생이 그 playId일 때만. 목적이 바뀌면 구간을 처음부터 다시 본다.
+    watchCues(playId, target) {
+      const token = current;
+      if (!token || token.playId !== playId) return;
+      token.cueTarget = target ?? null;
+      token.cueFired = new Set();
+      token.cueLastSec = null;
+      clearTimeout(token.cueTimer);
+      token.cueTimer = null;
+      if (token.cueTarget === null) return;
+      checkCue(token); // 재생 시작 전이면 아무것도 하지 않고, 시작 때 첫 실제 위치부터 본다
+      if (isCurrent(token)) armCue(token);
     },
     cancel(playId) {
       if (current?.playId === playId) stopCurrent('cancelled');
@@ -435,6 +517,8 @@ export function createSeqPlayer({
           currentTimeSec: v ? v.currentTime : null,
           durationSec: v && Number.isFinite(v.duration) ? v.duration : null,
           inSec: entries[t.clip]?.inSec ?? null,
+          cueTarget: t.cueTarget,
+          cues: (entries[t.clip]?.cues ?? []).filter((c) => t.cueTarget === null || cueFits(c, t.cueTarget)),
           outSec: entries[t.clip]?.outSec ?? null,
           paused: v ? v.paused : null,
         };

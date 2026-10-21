@@ -49,6 +49,8 @@ const player = createSeqPlayer({
   now,
   onFinished: (playId) => apply(director.playbackFinished(playId, now())),
   onError: (playId, reason) => apply(director.playbackFailed(playId, reason, now())),
+  // 실제 영상 위치가 연결 구간 안 — 코어가 현재 재생·대기·목적을 다시 검증한 뒤에만 잇는다.
+  onCue: (playId, target, via) => apply(director.cueReached(playId, target, via, now())),
   // 표시가 바뀌면 렌더러가 다음 화면 갱신을 기다리지 않고 바로 그린다. 렌더러가 아직 쓰는 요소(그리는 중·섞는 중)는 재생기가 미리 되감지 않는다.
   onDisplayChange: () => stageRenderer?.refresh(),
   isShown: (element) => stageRenderer?.usesElement(element) ?? false,
@@ -59,6 +61,7 @@ function apply(actions) {
   for (const action of actions) {
     if (action.type === 'play') player.play(action);
     else if (action.type === 'cancel') player.cancel(action.playId);
+    else if (action.type === 'cueWatch') player.watchCues(action.playId, action.target);
     else if (action.type === 'pose') player.setPose(action.pose);
   }
   updateMessages();

@@ -13,17 +13,36 @@
 // SC3_Hidden_Clue(너구리 빼꼼)는 사용자 요청(2026-10-21)으로 재생하지 않는다 — 원본 파일은 저장소·서버 allowlist에 미사용 자료로 남지만
 // 이 표에 없으므로 불러오지도 재생하지도 않는다.
 // 실제 재생 길이(timeout 계산) = outSec − inSec(core/sequence.js clipPlayMs). 완료는 실제 영상 시각이 outSec에 닿았을 때(또는 ended)만 판단한다.
+// cues = 자세 연결 구간(초, 원본 기준, 양끝 포함) — 놀이·눈치챔 중 거리 판정으로 다른 클립(SC2 0초·SC1 1.5초·놀이 시작의 눈사람 쪽
+//   기본 자세)이 필요할 때, **실제 영상 위치가 이 안에 있을 때만** 그 자리에서 잇는다(사용자 요청 2026-10-21 "고정시간으로 끊지 말고
+//   적정 시간에 교체"). 임시 연출값: 오케스트레이터가 원본을 0.25초 간격·후보 양끝 0.125초로 네 캐릭터를 함께 눈으로 비교해 정함 —
+//   완전히 같은 자세나 자동 인식이 아니다(SC0A 중간 구간은 여우 팔이 조금 높음). 도착 자세가 모두 같은 기본 놀이 계열이라 목적별 구분은
+//   없다(필요하면 cue에 targets: ['duck'] 등을 줄 수 있다). 구간이 없으면 정상 out까지 재생한다 — SC0B는 중간 호환 자세가 없어
+//   큰 동작 직후 요청이면 6.75초까지(최대 약 6초) 기다릴 수 있고, SC0C도 최대 약 5.6초. 거리 요청이 없으면 구간에서 자르지 않는다.
 // SC1b_Glance(중간 거리 곁눈질)는 아직 영상이 없다(file null). 생기면 file·durationMs를 채우고 server/media.js allowlist에 추가한다.
 // 정/역방향 짝(mirrorOf·frames·fps): SC4와 그 역순 파생 영상(SC4R, 사용자 요청 2026-10-21 — 복귀 도중 다시 다가오면 같은 자세에서 되돌아 숨기).
 //   SC4R 프레임 j = SC4 원본 프레임 (frames − 1 − j). 둘 다 169프레임, 24fps, 마지막 프레임 PTS 7.0초(길이 7.041667초와 1프레임 차이).
 //   SC4 재생 구간 0.50~6.00초(프레임 12~144)에 대응하는 SC4R 구간은 1.00~6.50초(프레임 24~156). SC4R의 끝(6.5초)이 모두 숨은 자세다.
 //   짝 사이 전환은 지금 보이는 프레임의 대응 지점부터 시작한다(scene/seq-player.js mirrorStartSec). hiddenSec = 모두 숨은 자세의 시각
 //   (짝 영상이 아직 화면에 나오기 전에 반전하면 보이는 것은 숨은 자세이므로 여기서 시작).
+const cues = (...ranges) => Object.freeze(ranges.map(([fromSec, toSec]) => Object.freeze({ fromSec, toSec })));
 const CLIPS = Object.freeze({
-  SC0A_Pat: Object.freeze({ file: 'SC0A_Pat.mp4', durationMs: 8042, inSec: 0.25, outSec: 7.25, title: '눈사람 다듬기' }),
-  SC0B_Roll: Object.freeze({ file: 'SC0B_Roll.mp4', durationMs: 8042, inSec: 0.5, outSec: 8.0, title: '작은 눈덩이 굴리기' }),
-  SC0C_Playful: Object.freeze({ file: 'SC0C_Playful.mp4', durationMs: 8042, inSec: 0, outSec: 7.75, title: '눈 털며 장난치기' }),
-  SC1_Notice: Object.freeze({ file: 'SC1_Notice.mp4', durationMs: 8042, inSec: 1.5, outSec: 6.75, title: '놀다가 눈치챔' }),
+  SC0A_Pat: Object.freeze({
+    file: 'SC0A_Pat.mp4', durationMs: 8042, inSec: 0.25, outSec: 7.25, title: '눈사람 다듬기',
+    cues: cues([0.25, 0.375], [2.375, 2.625], [4.125, 4.25], [6.5, 7.25]), // 초반 기본 자세 · 손 내려놓는 박자 2회 · 말미 복귀
+  }),
+  SC0B_Roll: Object.freeze({
+    file: 'SC0B_Roll.mp4', durationMs: 8042, inSec: 0.5, outSec: 8.0, title: '작은 눈덩이 굴리기',
+    cues: cues([0.5, 0.75], [6.75, 8.0]), // 초반 기본 자세 · 굴리기를 마치고 몸·손·시선이 돌아온 뒤(2.5~5.5초 전면 자세는 제외)
+  }),
+  SC0C_Playful: Object.freeze({
+    file: 'SC0C_Playful.mp4', durationMs: 8042, inSec: 0, outSec: 7.75, title: '눈 털며 장난치기',
+    cues: cues([0, 0.5], [1.5, 1.875], [7.5, 7.75]), // 초기 동작 · 몸을 크게 돌리기 전 손을 둔 구간 · 말미 복귀
+  }),
+  SC1_Notice: Object.freeze({
+    file: 'SC1_Notice.mp4', durationMs: 8042, inSec: 1.5, outSec: 6.75, title: '놀다가 눈치챔',
+    cues: cues([1.5, 2.75], [6.25, 6.75]), // 고개를 크게 들어 관객 쪽을 보기 전 · 눈사람 쪽으로 돌아온 뒤
+  }),
   SC1b_Glance: Object.freeze({ file: null, durationMs: 8000, inSec: null, outSec: null, title: '놀며 곁눈질(영상 없음)' }),
   SC2_Duck: Object.freeze({ file: 'SC2_Duck.mp4', durationMs: 4042, inSec: 0, outSec: 3.5, title: '놀라서 그 자리에서 숨기' }),
   SC4_Return_To_Play: Object.freeze({
@@ -59,12 +78,10 @@ export const SETTINGS = Object.freeze({
     duckClip: 'SC2_Duck',
     returnClip: 'SC4_Return_To_Play',
     rehideClip: 'SC4R_Rehide', // 복귀 도중 near: 지금 자세에서 거꾸로 숨기(SC4 역방향 파생 영상)
-    // 임시값: 끊을 수 있는 클립(놀이·눈치챔) 중 다른 클립이 필요한 판정이 오면 이 시간(ms) 안에 끝나지 않을 때 강제 전환한다.
-    switchWithinMs: 800,
-    // 임시값: 다른 영상으로 넘어갈 때 이전 화면(멈춘 마지막 프레임)과 새 영상을 섞는 시간(ms, 유화 앞에서 섞음).
-    // 새 영상은 섞는 동안에도 재생된다(정지 시간 추가 없음). 안전 정지(H)·H 이미지에서 시작·같은 영상 재시작은 섞지 않는다.
-    naturalBlendMs: 150, // 클립이 끝나 다음 클립으로 이어질 때(IDLE 경계 등)
-    forcedBlendMs: 200, // 거리 때문에 진행 중 클립을 도중에 바꿀 때
+    // 임시값: 다른 영상으로 넘어갈 때(클립 끝·자세 연결 구간) 이전 화면(멈춘 마지막 프레임)과 새 영상을 섞는 시간(ms, 유화 앞에서 섞음).
+    // 새 영상은 섞는 동안에도 재생된다(정지 시간 추가 없음). 다른 자세를 감추려는 용도가 아니다.
+    // 안전 정지(H)·H 이미지에서 시작·같은 영상 재시작·복귀 정/역 반전은 섞지 않는다.
+    naturalBlendMs: 150,
     playTimeoutMarginMs: 4000, // 임시값: 편집 구간 길이 + 이 여유(불러오기·탐색 포함) 안에 완료가 없으면 재생 오류(timeout)
     playbackRetryDelayMs: 3000, // 임시값: 재생 오류 후 이만큼(ms) 안전 정지한 뒤 다시 판단
   }),

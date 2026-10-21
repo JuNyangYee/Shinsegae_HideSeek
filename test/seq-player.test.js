@@ -239,13 +239,13 @@ test('섞기: 다른 영상으로 넘어가면 이전 영상을 blendFrom으로 
   player.play({ playId: 1, clip: 'A' });
   await flush();
   a.time = 3; // 재생 도중
-  player.play({ playId: 2, clip: 'B', blendMs: 200, forced: true }); // 거리 강제 전환
+  player.play({ playId: 2, clip: 'B', blendMs: 200 });
   await flush();
   assert.equal(player.display.element, b);
   assert.deepEqual([player.display.blendFrom, player.display.blendMs], [a, 200]);
   assert.equal(a.seeks, 0); // 섞는 중인 이전 영상은 미리 되감지 않는다
   const last = player.snapshot(0).transitions.at(-1);
-  assert.deepEqual([last.forced, last.blended], [true, true]);
+  assert.deepEqual([last.blendMs, last.blended], [200, true]);
 
   endFade(); // 렌더러가 섞기를 끝냄 → 다음 표시 변경 때 되감긴다
   b.time = 2;
@@ -367,4 +367,87 @@ test('짝이 아직 화면에 나오기 전 반전하면(보이는 것은 숨은
   r.finishSeek(); // 미리 감기 완료
   await flush();
   assert.ok(Math.abs(r.time - (6.5 - 1 / 24)) < 1e-9); // hiddenSec 6.5를 out 한 프레임 전으로
+});
+
+// 자세 연결 구간: P는 편집 0~7초, 연결 구간 1~1.5초·3~3.25초.
+const CUE_CLIPS = {
+  P: { file: 'P.mp4', durationMs: 8000, inSec: 0, outSec: 7, cues: [{ fromSec: 1, toSec: 1.5 }, { fromSec: 3, toSec: 3.25 }] },
+};
+function setupCue() {
+  const videos = [];
+  const cues = [];
+  const player = createSeqPlayer({
+    clips: CUE_CLIPS,
+    seqBase: '/media/seq/',
+    safeStillUrl: '/media/pose/H.png',
+    onFinished: () => {},
+    onError: () => {},
+    onCue: (playId, target, via) => cues.push([playId, target, via.atSec, via.fromSec]),
+    createVideoElement: () => {
+      const video = new FakeVideo();
+      videos.push(video);
+      return video;
+    },
+    createImage: () => ({ removeAttribute() {} }),
+  });
+  player.preload();
+  return { player, p: videos[0], cues };
+}
+
+test('연결 구간: 재생 시작 전(불러오기·탐색 중)에는 위치를 믿지 않고, 시작 뒤 실제 위치가 구간 안일 때만 한 번 알린다', async (t) => {
+  const { player, p, cues } = setupCue();
+  t.after(() => player.dispose());
+  p.time = 1.2; // 불러오는 중 위치(구간 안이지만 믿지 않음)
+  player.play({ playId: 1, clip: 'P' });
+  player.watchCues(1, 'duck'); // 재생 시작 전에 대기가 옴
+  await flush();
+  assert.deepEqual(cues, []);
+  p.becomeReady(); // 준비 → 편집 시작점(0)으로 탐색
+  await flush();
+  assert.deepEqual([p.seeking, cues], [true, []]);
+  p.finishSeek(); // 재생 시작 — 첫 실제 위치 0초는 구간 밖
+  await flush();
+  assert.deepEqual(cues, []);
+  p.advanceTo(0.9);
+  assert.deepEqual(cues, []);
+  p.advanceTo(1.1);
+  p.advanceTo(1.3);
+  assert.deepEqual(cues, [[1, 'duck', 1.1, 1]]); // 구간마다 한 번
+});
+
+test('연결 구간: 통째로 놓친 구간은 건너뛰고 다음 구간에서, 대기 취소·재생 취소 뒤에는 알리지 않으며, 목적이 바뀌면 다시 본다', async (t) => {
+  const { player, p, cues } = setupCue();
+  t.after(() => player.dispose());
+  p.becomeReady();
+  player.play({ playId: 1, clip: 'P' });
+  await flush();
+  player.watchCues(1, 'duck');
+  p.advanceTo(1.6); // 1~1.5초 구간을 안에서 한 번도 못 봄 → 지난 구간으로 끊지 않음
+  assert.deepEqual(cues, []);
+  p.advanceTo(3.1);
+  assert.deepEqual(cues, [[1, 'duck', 3.1, 3]]);
+  player.watchCues(1, 'notice'); // 목적 변경 → 구간을 처음부터 다시 본다(지금 3.1초 구간 안)
+  assert.deepEqual(cues.at(-1), [1, 'notice', 3.1, 3]);
+  player.watchCues(1, null); // 대기 취소
+  p.advanceTo(3.2);
+  assert.equal(cues.length, 2);
+  player.watchCues(2, 'duck'); // 다른(이전·다음) 재생 ID의 지시는 무시
+  player.cancel(1);
+  p.advanceTo(3.15);
+  assert.equal(cues.length, 2);
+});
+
+test('연결 구간 타이머: 구간 시작까지 남은 영상 시간 뒤 실제 위치로 확인, 영상이 멈춰 있으면 알리지 않고 다시 잰다', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { player, p, cues } = setupCue();
+  t.after(() => player.dispose());
+  p.becomeReady();
+  player.play({ playId: 1, clip: 'P' });
+  await flush();
+  player.watchCues(1, 'duck'); // 0초 → 1초 구간까지 1000 ms 뒤 확인
+  t.mock.timers.tick(1000); // 영상이 멈춰(시각 0) 구간 밖 → 알리지 않음
+  assert.deepEqual(cues, []);
+  p.time = 1.2; // timeupdate 없이 시각만 진행
+  t.mock.timers.tick(1000);
+  assert.deepEqual(cues, [[1, 'duck', 1.2, 1]]);
 });

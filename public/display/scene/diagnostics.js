@@ -13,7 +13,9 @@ export const PHASE_LABELS = Object.freeze({
 const DECISION_LABELS = { unknown: '알 수 없음', far: '원거리', mid: '중간', near: '근거리' };
 const STATUS_LABELS = { ok: '정상 감지', 'no-target': '감지 없음', error: '입력 오류' };
 const OUTCOME_LABELS = { finished: '완료', cancelled: '취소', replaced: '교체', error: '오류' };
-const SWITCH_LABELS = { forced: '강제 전환', natural: '자연 종료로 이음', cancelled: '판정 되돌아와 취소', safe: '안전 정지로 취소' };
+const SWITCH_LABELS = { cue: '연결 구간에서 이음', natural: '구간 없이 정상 완료에서 이음', cancelled: '판정 되돌아와 취소', safe: '안전 정지로 취소' };
+const TARGET_LABELS = { duck: '숨기', notice: '눈치챔', play: '놀이' };
+const cueText = (via) => `${via.clip} ${via.atSec.toFixed(3)} s(구간 ${sec(via.fromSec)}~${sec(via.toSec)})`;
 const sec = (v) => (v === null || v === undefined ? '-' : v.toFixed(2));
 const STAGE_LABELS = { pending: '대기', loading: '불러오는 중', seeking: '처음으로 탐색', starting: '재생 시작 중', playing: '재생 중' };
 
@@ -48,6 +50,9 @@ function formatPlayer({ current, last }) {
     const d = current.durationSec === null ? '-' : current.durationSec.toFixed(2);
     parts.push(`#${current.playId} ${current.clip} · ${STAGE_LABELS[current.stage] ?? current.stage} · ${t}/${d} s`
       + ` · 편집 ${sec(current.inSec)}~${current.outSec === null ? '끝' : sec(current.outSec)} s`
+      + (current.cueTarget
+        ? ` · 연결 대기(${TARGET_LABELS[current.cueTarget] ?? current.cueTarget}) 가능 구간 ${current.cues.map((c) => `${sec(c.fromSec)}~${sec(c.toSec)}`).join(', ') || '없음(정상 완료까지)'} s`
+        : '')
       + ` · readyState ${current.readyState ?? '-'}${current.paused ? ' · 멈춤' : ''} · 경과 ${Math.round(current.elapsedMs)} ms`);
   }
   if (last) parts.push(`마지막 #${last.playId} ${last.clip} ${OUTCOME_LABELS[last.outcome]}${last.reason ? `(${last.reason})` : ''}`);
@@ -72,7 +77,7 @@ function formatTransition(player, r) {
   const drawnMs = swap && swap.kind === 'video' && swap.clip === t.clip && swap.atMs >= t.requestMs ? swap.drawnMs : null;
   const origin = t.prevEndedMs ?? t.requestMs;
   const parts = [
-    `#${t.playId} ${t.fromClip ?? '-'} → ${t.clip}${t.forced ? '(거리 강제)' : ''}`
+    `#${t.playId} ${t.fromClip ?? '-'} → ${t.clip}${t.via ? ` · 연결 ${cueText(t.via)}` : ''}`
       + ` · 섞기 ${t.blended ? `${t.blendMs} ms` : '없음'}${t.endedBy ? ` · 끝남(${t.endedBy})` : ''}`
       + (t.mirror ? ` · 정/역 반전 시작 ${t.mirror}` : ''),
     `끝→첫 그림 ${drawnMs === null ? '-' : Math.round(drawnMs - origin)} ms${t.prevEndedMs === null ? '(요청 기준)' : ''}`,
@@ -129,15 +134,17 @@ export function createDiagnostics(listEl, { note = '' } = {}) {
     if (seq.noticed) flags.push('관객 인지');
     if (seq.suspended) flags.push(`일시 중지(${suspendedBy.join(', ') || '-'})`);
     if (seq.phase === 'hidden' && seq.playId === null) flags.push('숨은 대기(자동 재생 없음 · 멀어지면 복귀)');
-    if (seq.switchAtMs !== null) {
-      flags.push(`전환 예약 · ${Math.max(0, (seq.switchAtMs - nowMs) / 1000).toFixed(1)} s 안에 끝나지 않으면 강제(판정 ${DECISION_LABELS[seq.decision]})`);
+    if (seq.pending) {
+      flags.push(`연결 대기 → ${TARGET_LABELS[seq.pending.target] ?? seq.pending.target} · ${((nowMs - seq.pending.sinceMs) / 1000).toFixed(1)} s째(판정 ${DECISION_LABELS[seq.decision]})`);
     } else if (seq.lastSwitch) {
-      flags.push(`마지막 예약: ${SWITCH_LABELS[seq.lastSwitch.outcome] ?? seq.lastSwitch.outcome}`);
+      const s = seq.lastSwitch;
+      flags.push(`마지막 연결: ${SWITCH_LABELS[s.outcome] ?? s.outcome}${s.via ? ` ${cueText(s.via)}` : ''}`);
     }
     cells.phase.textContent = `${PHASE_LABELS[seq.phase]} (${seq.phase})${flags.length ? ` · ${flags.join(' · ')}` : ''}`;
     cells.play.textContent = seq.playId === null
       ? `진행 없음 · 마지막 #${seq.lastPlayId} · 무시한 늦은 알림 ${seq.ignoredCompletions}`
       : `#${seq.playId} ${seq.clip} · 무시한 늦은 알림 ${seq.ignoredCompletions}`;
+    if (seq.ignoredCues) cells.play.textContent += ` · 받지 않은 연결 알림 ${seq.ignoredCues}`;
     cells.player.textContent = `${formatPlayer(player)}${player.blocked ? ' · 자동 재생 막힘' : ''}`;
     if (r) {
       const shownLabels = { image: 'H 정지 이미지', cover: '가림 화면(H 이미지 준비 안 됨)' };

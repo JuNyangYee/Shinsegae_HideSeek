@@ -1,5 +1,5 @@
-// 시퀀스 상태(연출 코어): 근접 판정 + 재생 완료/오류 → 단계 전환과 재생 지시.
-// DOM·타이머 없는 순수 모듈이다. 현재 시각(nowMs)은 호출하는 쪽이 넣는다.
+// 시퀀스 상태(연출 코어): 근접 판정 + 재생 완료/오류/연결 구간 도달 → 단계 전환과 재생 지시.
+// DOM·타이머 없는 순수 모듈이다. 현재 시각(nowMs)은 호출하는 쪽이 넣는다. 영상 위치는 모른다 — 재생기가 실제 위치로 알린다.
 //
 // 단계(phase):
 //   safe    — 안전 정지(H 정지 이미지). 시작·unknown·재생 오류 대기·일시 중지(탭 숨김·렌더러 실패).
@@ -11,22 +11,26 @@
 //   return  — SC4_Return_To_Play 1회(H → P).
 //   rehide  — SC4 역방향 파생 영상(SC4R) 1회(지금 자세 → H). 복귀 도중 near가 되면 지금 보이는 자세에서 거꾸로 숨는다.
 //
-// 복귀 정/역 반전(사용자 요청 2026-10-21): return 중 near → 바로 rehide, rehide 중 mid·far → 바로 return. 전환 예약(0.8초) 없이
+// 복귀 정/역 반전(사용자 요청 2026-10-21): return 중 near → 바로 rehide, rehide 중 mid·far → 바로 return. 연결 대기 없이
 // 안정된 판정이 오는 즉시 바꾸고, 섞지 않으며(blendMs 0), 재생기가 지금 보이는 프레임의 대응 지점부터 시작한다(지시의 mirror).
-// 서 있는 SC2로 건너뛰지 않는다. 다 나와 놀이(play)가 된 뒤의 near는 기존대로 SC2 숨기.
+// 서 있는 SC2로 건너뛰지 않는다. 다 나와 놀이(play)가 된 뒤의 near는 아래 연결 대기 → SC2 숨기.
 //
-// 판정 변화와 진행 중 클립(사용자 요청 2026-10-21 — 끊김은 줄이되 반응이 너무 늦지 않게):
-//   - 끊을 수 있는 클립(놀이·눈치챔 P→P) 중에 다른 클립이 필요한 판정이 오면 전환을 예약한다.
-//     예약 시각(판정 + switchWithinMs, 약 0.8초) 전에 클립이 끝나면 자연스럽게 이어 가고, 그때도 진행 중이면
-//     최신 판정의 다음 클립으로 바꾼다(강제 전환, forcedBlendMs로 섞음). 그 사이 판정이 되돌아오면 예약을 취소한다(예약은 하나뿐).
-//   - 클립이 끝나 다음 클립으로 이어지는 자연 전환은 naturalBlendMs로 짧게 섞는다(이전 화면이 다른 영상일 때만 — 재생기가 판단).
+// 판정 변화와 진행 중 클립 — 자세 연결 구간(사용자 요청 2026-10-21: "고정시간으로 끊지 말고 적정 시간에 교체"):
+//   - 놀이·눈치챔(P→P) 중에 다른 클립이 필요한 판정이 오면 **연결 대기**(목적 하나: duck·notice·play)를 두고 재생기에 지켜볼 목적을
+//     알린다(cueWatch). 재생기가 실제 영상 위치가 그 클립의 연결 가능 자세 구간(settings clips[].cues, 원본 프레임을 보고 정한 임시값)
+//     안에 들어온 것을 알리면(cueReached) 현재 재생 ID·대기·목적이 아직 맞을 때만 그 자리에서 최신 판정의 다음 클립으로 바꾼다.
+//     벽시계 시간만으로 끊지 않는다(앞선 "판정 + 0.8초 강제 전환" 폐지). 구간이 없거나 다 지나면 정상 완료(out) 때 최신 판정으로 잇는다.
+//   - 판정이 되돌아오면 대기를 취소하고(cueWatch target null), 목적이 바뀌면 새 목적을 알린다(대기는 하나뿐).
+//   - 클립이 끝나거나 연결 구간에서 이어질 때 다른 영상이면 naturalBlendMs로 짧게 섞는다(재생기가 판단).
 //   - 숨기(SC2 P→H)는 끊지 않는다 — 몸이 숨는 동작을 마친 뒤 최신 판정으로 고른다.
-//   - unknown·재생 오류·일시 중지는 즉시 안전 정지(예약 취소).
+//   - unknown·재생 오류·timeout·일시 중지는 즉시 안전 정지(대기 취소). 현재 재생의 오류는 다른 처리보다 먼저 받는다.
 //   - 클립이 없는 숨은 대기 중에는 mid·far가 되면 바로 복귀한다.
 //
 // 모든 입력 함수는 재생 계층에 줄 지시 목록을 돌려준다.
-//   { type: 'play', playId, clip, phase, durationMs, blendMs, forced, mirror }
-//     durationMs = 편집 구간 길이(mirror면 남은 구간의 상한), forced = 거리로 도중에 바꿈, mirror = 정/역 짝의 대응 지점부터 시작
+//   { type: 'play', playId, clip, phase, durationMs, blendMs, mirror, via }
+//     durationMs = 편집 구간 길이(mirror면 남은 구간의 상한), mirror = 정/역 짝의 대응 지점부터 시작,
+//     via = 연결 구간에서 이어졌으면 { clip, atSec, fromSec, toSec }(진단용), 아니면 null
+//   { type: 'cueWatch', playId, target }   // 그 재생에서 target(다음 단계) 연결 구간을 지켜보라. target null = 그만
 //   { type: 'cancel', playId }
 //   { type: 'pose', pose: 'hidden' }   // 연출 없이 H 정지 이미지로 바로 둔다(안전 정지)
 
@@ -48,38 +52,47 @@ export function createSequenceDirector(cfg) {
   let noticed = false; // 이번 근접 방문(far가 아닌 동안)에 이미 관객을 알아챘는가 — 같은 mid에서 눈치챔 반복 금지
   const cycleIndex = { play: 0, mid: 0 };
   let retryAtMs = null; // 재생 오류 후 다시 판단할 시각. null이면 오류 대기 아님
-  let switchAtMs = null; // 끊을 수 있는 클립 중 전환 예약 시각. null이면 예약 없음
-  let lastSwitch = null; // 진단: 마지막 예약의 결과 { outcome: 'forced'|'natural'|'cancelled'|'safe', atMs }
+  let pending = null; // 연결 대기 { playId, target, sinceMs }. null이면 대기 없음
+  let lastSwitch = null; // 진단: 마지막 대기의 결과 { outcome: 'cue'|'natural'|'cancelled'|'safe', target, atMs, via }
   let suspended = false; // 탭 숨김·렌더러 실패 등 바깥 사정으로 멈춤
   let lastError = null; // { playId, clip, reason, atMs }
   let ignoredCompletions = 0;
+  let ignoredCues = 0; // 받지 않은 연결 구간 알림(이전 재생·대기 없음·목적이 바뀜)
 
-  function endSwitch(outcome, nowMs) {
-    if (switchAtMs === null) return;
-    switchAtMs = null;
-    lastSwitch = { outcome, atMs: nowMs };
+  function endPending(outcome, nowMs, via = null) {
+    if (pending === null) return;
+    lastSwitch = { outcome, target: pending.target, atMs: nowMs, via };
+    pending = null;
   }
 
   // mirror: 복귀 정/역 반전 — 지금 보이는 프레임의 대응 지점부터 시작하므로 남은 길이를 모른다. timeout은 편집 구간 전체(상한)로 잡는다.
-  function startClip(nextPhase, clip, nowMs, { forced = false, mirror = false } = {}) {
+  function startClip(nextPhase, clip, nowMs, { mirror = false, via = null } = {}) {
     const durationMs = clipPlayMs(cfg.clips[clip]);
     // 정/역 반전은 같은 자세에서 이어지므로 섞지 않는다.
-    const blendMs = mirror ? 0 : forced ? cfg.forcedBlendMs : cfg.naturalBlendMs;
+    const blendMs = mirror ? 0 : cfg.naturalBlendMs;
     const playId = ++lastPlayId;
     current = { playId, clip, deadlineMs: nowMs + durationMs + cfg.playTimeoutMarginMs };
     phase = nextPhase;
     if (nextPhase !== 'play' && decision !== 'far') noticed = true; // 눈치챔·숨기·숨음·복귀는 관객을 이미 안 상태
-    return [{ type: 'play', playId, clip, phase: nextPhase, durationMs, blendMs, forced, mirror }];
+    return [{ type: 'play', playId, clip, phase: nextPhase, durationMs, blendMs, mirror, via }];
   }
 
-  // 진행 중 클립을 지금 판정으로 바꿔야 하는가(끊을 수 있는 클립만). 강제 전환 뒤 다음 클립은 advance가 지금 단계로 고른다:
-  //   play·notice(P로 끝나는 단계) → near면 duck, mid(눈치챔 전)면 notice, (눈치챔 중) far면 play.
-  //   복귀·다시 숨기(return·rehide)는 예약하지 않는다 — 정/역 반전(shouldFlip)으로 바로 바꾸거나 같은 방향이면 그대로.
-  function wantsSwitch() {
-    if (!current) return false;
-    if (phase === 'play') return decision === 'near' || (decision === 'mid' && !noticed);
-    if (phase === 'notice') return decision === 'near' || decision === 'far';
-    return false; // duck: 숨는 동작은 끝까지. return·rehide: shouldFlip. hidden: 클립 없음(판정 변화 때 advance가 바로 복귀)
+  // 진행 중 클립을 지금 판정으로 바꿔야 한다면 그 목적(다음 단계), 아니면 null. 연결 대기는 놀이·눈치챔(P→P)에서만:
+  //   play → near면 duck, mid(눈치챔 전)면 notice / notice → near면 duck, far면 play.
+  //   duck은 숨는 동작을 끝까지, return·rehide는 정/역 반전(shouldFlip), hidden은 클립 없음(판정 변화 때 advance가 바로 복귀).
+  function switchTarget() {
+    if (!current) return null;
+    if (phase === 'play') {
+      if (decision === 'near') return 'duck';
+      if (decision === 'mid' && !noticed) return 'notice';
+      return null;
+    }
+    if (phase === 'notice') {
+      if (decision === 'near') return 'duck';
+      if (decision === 'far') return 'play';
+      return null;
+    }
+    return null;
   }
 
   // 복귀 정/역 반전이 필요한가: 나오는 중(return)에 near, 다시 숨는 중(rehide)에 mid·far.
@@ -119,55 +132,53 @@ export function createSequenceDirector(cfg) {
     return [];
   }
 
-  // 진행 중 클립을 취소하고 H 정지 이미지로 안전 정지한다(전환 예약도 취소).
-  function safeStop() {
+  // 진행 중 클립을 취소하고 H 정지 이미지로 안전 정지한다(연결 대기도 취소).
+  function safeStop(nowMs) {
     const actions = interrupt();
     phase = 'safe';
-    endSwitch('safe', null);
+    endPending('safe', nowMs);
     actions.push({ type: 'pose', pose: 'hidden' });
     return actions;
   }
 
-  // 진행 중 클립이 없을 때 지금 단계(방금 끝난 단계 또는 safe)와 최신 판정으로 다음 클립을 고른다.
-  // forced: 거리 때문에 진행 중 클립을 도중에 바꾼 강제 전환인가(섞는 시간만 다름).
-  function advance(nowMs, forced = false) {
+  // 진행 중 클립이 없을 때 지금 단계(방금 끝난·끊긴 단계 또는 safe)와 최신 판정으로 다음 클립을 고른다.
+  function advance(nowMs, via = null) {
     if (current || suspended || retryAtMs !== null || decision === 'unknown') return [];
     if (HIDDEN_END.has(phase)) {
-      if (decision !== 'near') return startClip('return', cfg.returnClip, nowMs, { forced }); // 숨은 대기 중이면 바로 복귀
+      if (decision !== 'near') return startClip('return', cfg.returnClip, nowMs); // 숨은 대기 중이면 바로 복귀
       return phase === 'hidden' ? [] : enterHiddenWait(); // 숨기·다시 숨기가 끝났거나 안전 정지에서 시작 → 숨은 대기(이미 대기 중이면 그대로)
     }
     // 보이는 자세(P)로 끝남: play · notice · return
-    if (decision === 'near') return startClip('duck', cfg.duckClip, nowMs, { forced });
-    if (decision === 'mid' && !noticed) return startClip('notice', cfg.noticeClip, nowMs, { forced });
-    return startClip('play', nextLoopClip(), nowMs, { forced });
+    if (decision === 'near') return startClip('duck', cfg.duckClip, nowMs, { via });
+    if (decision === 'mid' && !noticed) return startClip('notice', cfg.noticeClip, nowMs, { via });
+    return startClip('play', nextLoopClip(), nowMs, { via });
   }
 
-  // 판정이 바뀐 뒤: 바꿔야 하면 예약(이미 있으면 시각 유지 — 최신 판정은 실행 때 다시 읽음), 아니면 예약 취소.
-  function reviewSwitch(nowMs) {
-    if (wantsSwitch()) {
-      if (switchAtMs === null) switchAtMs = nowMs + cfg.switchWithinMs;
-    } else {
-      endSwitch('cancelled', nowMs);
+  // 판정이 바뀐 뒤 연결 대기를 맞춘다: 목적이 생기거나 바뀌면 알리고, 없어지면 취소한다.
+  function reviewPending(nowMs) {
+    const target = switchTarget();
+    if (target === (pending?.target ?? null)) return [];
+    if (target === null) {
+      const { playId } = pending;
+      endPending('cancelled', nowMs);
+      return [{ type: 'cueWatch', playId, target: null }];
     }
+    pending = { playId: current.playId, target, sinceMs: pending?.sinceMs ?? nowMs };
+    return [{ type: 'cueWatch', playId: current.playId, target }];
   }
 
   function fail(reason, nowMs) {
     lastError = { playId: current.playId, clip: current.clip, reason, atMs: nowMs };
     retryAtMs = nowMs + cfg.playbackRetryDelayMs;
-    return safeStop();
+    return safeStop(nowMs);
   }
 
-  // 시간에 따른 처리: 재생 timeout은 오류, 오류 대기가 끝나면 다시 판단, 전환 예약 시각이 되면 강제 전환.
+  // 시간에 따른 처리: 재생 timeout은 오류, 오류 대기가 끝나면 다시 판단. (연결 대기는 시간으로 실행하지 않는다.)
   function expire(nowMs) {
     if (current && nowMs > current.deadlineMs) return fail('timeout', nowMs);
     if (retryAtMs !== null && nowMs >= retryAtMs) {
       retryAtMs = null;
       return advance(nowMs);
-    }
-    if (switchAtMs !== null && nowMs >= switchAtMs) {
-      endSwitch('forced', nowMs);
-      if (!wantsSwitch()) return [];
-      return interrupt().concat(advance(nowMs, true));
     }
     return [];
   }
@@ -181,17 +192,16 @@ export function createSequenceDirector(cfg) {
     if (!changed) return actions;
     // unknown(센서 오류·stale): 진행 중이든 아니든 바로 안전 정지
     if (decision === 'unknown') {
-      if (current || phase !== 'safe') actions.push(...safeStop());
+      if (current || phase !== 'safe') actions.push(...safeStop(nowMs));
       return actions;
     }
-    // 진행 중이면: 복귀 정/역 반전은 바로, 그 밖에는 바로 끊지 않고 전환을 예약(또는 취소)한다. 클립이 없으면 바로 고른다.
+    // 진행 중이면: 복귀 정/역 반전은 바로, 그 밖에는 끊지 않고 연결 대기를 맞춘다. 클립이 없으면 바로 고른다.
     if (current) {
       if (shouldFlip()) {
-        endSwitch('cancelled', nowMs);
+        endPending('cancelled', nowMs);
         return actions.concat(flip(nowMs));
       }
-      reviewSwitch(nowMs);
-      return actions;
+      return actions.concat(reviewPending(nowMs));
     }
     return actions.concat(advance(nowMs));
   }
@@ -206,17 +216,31 @@ export function createSequenceDirector(cfg) {
     const actions = expire(nowMs); // 기한을 넘긴 완료는 성공으로 받지 않는다
     if (!isCurrent(playId)) return actions;
     current = null;
-    endSwitch('natural', nowMs); // 예약 시각 전에 끝남 — 최신 판정으로 자연스럽게 잇는다
+    endPending('natural', nowMs); // 연결 구간에서 잇지 못하고 끝남 — 최신 판정으로 정상 완료에서 잇는다
     return actions.concat(advance(nowMs));
   }
 
   function playbackFailed(playId, reason, nowMs) {
-    // 현재 재생의 오류는 전환 예약 만료·timeout보다 먼저 받는다 — 강제 전환으로 넘기지 않고 즉시 안전 정지·재시도.
+    // 현재 재생의 오류는 timeout·연결 처리보다 먼저 받는다 — 즉시 안전 정지·재시도.
     if (current && current.playId === playId) return fail(reason || 'playback-error', nowMs);
     // 이전·취소된 재생의 늦은 오류는 현재 재생을 실패시키지 않는다(시간 처리만 하고 무시한 알림으로 센다).
     const actions = expire(nowMs);
     ignoredCompletions += 1;
     return actions;
+  }
+
+  // 재생기 알림: 재생 playId의 실제 영상 위치가 target 연결 구간 안이다. via = { clip, atSec, fromSec, toSec }.
+  // 지금 재생·대기·목적이 모두 맞을 때만 그 자리에서 잇는다(늦은·이전 재생·목적이 바뀐 알림은 무시하고 센다).
+  function cueReached(playId, target, via, nowMs) {
+    const actions = expire(nowMs);
+    const valid = current !== null && current.playId === playId && pending !== null && pending.playId === playId
+      && pending.target === target && switchTarget() === target;
+    if (!valid) {
+      ignoredCues += 1;
+      return actions;
+    }
+    endPending('cue', nowMs, via);
+    return actions.concat(interrupt(), advance(nowMs, via));
   }
 
   function tick(nowMs) {
@@ -227,7 +251,7 @@ export function createSequenceDirector(cfg) {
   function setSuspended(on, nowMs) {
     if (on === suspended) return [];
     suspended = on;
-    if (on) return phase === 'safe' && !current ? [] : safeStop();
+    if (on) return phase === 'safe' && !current ? [] : safeStop(nowMs);
     return advance(nowMs);
   }
 
@@ -248,12 +272,13 @@ export function createSequenceDirector(cfg) {
       noticed,
       suspended,
       retryAtMs,
-      switchAtMs,
+      pending: pending && { ...pending },
       lastSwitch,
       lastError,
       ignoredCompletions,
+      ignoredCues,
     };
   }
 
-  return { setDecision, playbackFinished, playbackFailed, tick, setSuspended, retryNow, snapshot };
+  return { setDecision, playbackFinished, playbackFailed, cueReached, tick, setSuspended, retryNow, snapshot };
 }
