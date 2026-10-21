@@ -119,7 +119,8 @@
 ## 인계
 
 - 브랜치 `task/smooth-sequence-transitions`, 기준 master `53e47ce`, worktree `C:/Users/User/.paseo/worktrees/0wbs9g4q/task-smooth-sequence-transitions`.
-- 상태: 구현·간단 검수·필수 수정·필요한 브라우저 확인 완료. root 커밋 및 master 통합 예정(실제 결과는 아래 추가).
+- 상태: 구현·간단 검수·필수 수정·필요한 브라우저 확인 완료. 구현 커밋 `d6518bc`를 root가 만들고, clean 상태의 통합 checkout `D:/2026-09_ShinsegaeChristmas/006_Works/001_HideSeek`에서 master `53e47ce` → `d6518bc`로 `--ff-only` 병합했다. `git push origin master` 성공. 이 통합 기록은 후속 문서 커밋으로 남긴다.
+- 작업 브랜치·worktree는 보존했다. 최종 통합 기록 외 코드 변경이나 테스트 재실행은 하지 않았다.
 - 남은 이슈:
   - SC4 중 다가올 때 자세 튐(한계, 수용 여부 미정)
   - 편집값·예약·섞기 시간이 임시값임
