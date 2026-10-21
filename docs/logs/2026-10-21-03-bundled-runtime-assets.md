@@ -35,6 +35,13 @@
 ## 인계
 
 - 브랜치 `task/bundled-runtime-assets`, 기준 master `9a5bd0c`, worktree `C:/Users/User/.paseo/worktrees/0wbs9g4q/task-bundled-runtime-assets`.
-- 검수 완료. 이 로그를 포함한 변경을 오케스트레이터가 커밋하고 master에 fast-forward 병합·push한다. 실제 통합 결과는 이 작업을 마칠 때 아래에 기록한다.
+- 검수 완료. 기능 커밋 `892a323`을 오케스트레이터가 master에 fast-forward 병합·push했다(아래 통합 결과).
 - 남은 이슈: `AGENTS.md` 에셋 규칙 갱신 미반영(위 결정 절). 원본이 바뀌면 수동으로 다시 복사해 커밋해야 한다.
-- 다음 단계: 오케스트레이터 커밋·병합·push.
+- 다음 단계: 메인 프로젝트에서 `npm start`로 실행. 원본 교체 시 저장소 사본을 함께 갱신한다.
+
+## 통합 결과
+
+- 메인 checkout의 실제 브랜치 master와 clean 상태를 확인하고 origin을 fetch했다. 원격 master가 작업 브랜치의 조상임을 확인했다.
+- 기능 커밋 `892a323`: `git merge --ff-only task/bundled-runtime-assets` 성공(`9a5bd0c` → `892a323`), `git push origin master` 성공. 사용자 변경과 다른 worktree는 보존했다.
+- 메인 checkout에서 임시 포트의 기본 핸들러를 열어 three 모듈 2개·SC0A 영상·H 정지 이미지 HEAD 200을 확인하고 서버를 닫았다. 미디어 기본 경로가 메인 프로젝트 내부 `public/display/assets/seq/`·`pose/`임을 확인했다. 앞서 처리한 메인 checkout의 `npm ci`와 에셋 통합을 함께 확인한 것이다.
+- 이 통합 결과는 별도 문서 커밋으로 남긴다. 상주 서버는 띄워 두지 않았다.
