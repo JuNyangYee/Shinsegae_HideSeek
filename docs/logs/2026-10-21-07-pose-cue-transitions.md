@@ -113,7 +113,7 @@
 ## 인계
 
 - 브랜치 `task/smooth-sequence-transitions`, 기준 master `c8ca896`, worktree 위와 같음.
-- 상태: 구현·핵심 테스트·원본 자세 확인·범위를 제한한 Chrome 확인·간단 검수 완료. root 커밋 및 master fast-forward 병합·push 대기.
+- 상태: 구현·핵심 테스트·원본 자세 확인·범위를 제한한 Chrome 확인·간단 검수 완료. root가 구현 커밋 `250871b`를 만들고, clean 상태·실제 master 브랜치·origin/master 일치를 확인한 통합 checkout `D:/2026-09_ShinsegaeChristmas/006_Works/001_HideSeek`에서 `c8ca896` → `250871b`로 `--ff-only` 병합했다. `git push origin master` 성공. 이 통합 결과는 후속 문서 커밋으로 기록한다. 작업 브랜치·worktree는 보존했다.
 - 남은 이슈:
   - 연결 구간·섞기·in/out은 임시값이다.
   - SC0B·SC0C 최대 대기 허용 여부는 PROJECT 7장에 적었다.
