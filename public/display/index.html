@@ -22,15 +22,79 @@
     </main>
 
     <aside class="panel" id="dev-panel" hidden>
-      <p class="panel-badge">개발용 모의 입력 — 최종 센서 연동 아님</p>
+      <p class="panel-badge" id="panel-badge">개발 패널</p>
+
+      <section class="controls" aria-labelledby="source-title">
+        <h2 id="source-title">입력 선택</h2>
+        <div class="buttons" role="group" aria-label="판정 입력">
+          <button type="button" data-source="sensor">실센서 (mmWave)</button>
+          <button type="button" data-source="mock">모의 입력</button>
+        </div>
+        <p class="hint" id="source-hint">-</p>
+      </section>
+
+      <section class="controls" aria-labelledby="sensor-title">
+        <h2 id="sensor-title">센서 연결</h2>
+        <div class="field">
+          <label for="sensor-port">COM 포트</label>
+          <select id="sensor-port" class="wide"></select>
+          <div class="buttons">
+            <button type="button" id="sensor-refresh">새로고침</button>
+            <button type="button" id="sensor-connect" class="primary">연결</button>
+            <button type="button" id="sensor-disconnect">해제</button>
+          </div>
+          <p class="status-line" id="sensor-conn">-</p>
+          <p class="hint error-text" id="sensor-error" hidden></p>
+        </div>
+        <dl class="mini-status" id="sensor-status"></dl>
+        <p class="hint">거리는 센서까지의 거리(설치 높이·기울기 영향)입니다. 판정은 안정화 거리로 합니다. 설정 명령 처리 중·연결 끊김·거리 모드 아님·무수신은 안전 정지(H)입니다.</p>
+      </section>
+
+      <section class="controls" aria-labelledby="app-title">
+        <h2 id="app-title">앱 판정 설정</h2>
+        <p class="hint" id="threshold-hint">-</p>
+        <form id="app-form" class="grid-form" novalidate>
+          <label>숨기 경계 — 이 거리 미만이면 근거리 (m) <input type="number" name="nearBelowM" step="0.01" min="0.1" max="5"></label>
+          <label>눈치챔 경계 — 이 거리 이하면 중간(눈치챔), 초과면 원거리 (m) <input type="number" name="farAboveM" step="0.01" min="0.2" max="8"></label>
+          <label>이탈 여유 — 멀어질 때만 더함 (m) <input type="number" name="retreatMarginM" step="0.01" min="0" max="1"></label>
+          <label>접근 유지 시간 (ms) <input type="number" name="approachHoldMs" step="10" min="0" max="5000"></label>
+          <label>후퇴 유지 시간 (ms) <input type="number" name="retreatHoldMs" step="10" min="0" max="5000"></label>
+          <label>중앙값 창 (감지 거리 개수)
+            <select name="medianWindow"><option value="1">1 (끔)</option><option value="3">3</option><option value="5">5</option></select>
+          </label>
+          <label>감지 누락(n=0) 유예 (ms) <input type="number" name="absentGraceMs" step="10" min="0" max="2000"></label>
+          <div class="buttons">
+            <button type="submit" class="primary">적용</button>
+            <button type="button" id="app-revert">현재 적용값으로 되돌리기</button>
+          </div>
+          <p class="hint" id="app-result" role="status"></p>
+          <p class="hint" id="app-store"></p>
+        </form>
+      </section>
+
+      <section class="controls" aria-labelledby="sensor-config-title">
+        <h2 id="sensor-config-title">센서 자체 설정</h2>
+        <form id="sensor-form" class="grid-form" novalidate>
+          <label>감지 최소 거리 (m) <input type="number" name="rangeMinM" step="0.1" min="0.3" max="12"></label>
+          <label>감지 최대 거리 (m) <input type="number" name="rangeMaxM" step="0.1" min="0.3" max="12"></label>
+          <label>감도 임계 (1~99, 작을수록 민감) <input type="number" name="thrFactor" step="1" min="1" max="99"></label>
+          <label class="check"><input type="checkbox" name="microMotion"> 미세 움직임 감지</label>
+          <label class="check"><input type="checkbox" name="distanceMode"> 거리/속도 모드(mode 1)도 다시 지정</label>
+          <div class="buttons">
+            <button type="submit" class="primary">센서에 보내기</button>
+          </div>
+          <p class="hint">누를 때만 보드 펌웨어의 고정 명령(cmd setRange · setThrFactor · setMicroMotion · mode 1)을 차례로 보냅니다. 처리 동안 판정은 안전 정지합니다. 서버 시작·연결 때 자동으로 보내지 않습니다.</p>
+          <p class="hint" id="sensor-cmd-result" role="status"></p>
+          <dl class="mini-status" id="sensor-config-record"></dl>
+        </form>
+      </section>
 
       <section class="controls" aria-labelledby="controls-title">
-        <h2 id="controls-title">모의 입력</h2>
-
+        <h2 id="controls-title">모의 입력 <span class="hint" id="mock-state">-</span></h2>
+        <fieldset class="plain" id="mock-fieldset">
         <div class="field">
           <label for="distance">관객 거리 <output id="distance-value" for="distance">-</output></label>
           <input type="range" id="distance">
-          <p class="hint" id="threshold-hint">-</p>
           <div class="buttons">
             <button type="button" data-action="near">가까이 (N)</button>
             <button type="button" data-action="mid">중간 (M)</button>
@@ -48,6 +112,7 @@
           </div>
           <p class="hint">감지 없음은 대상이 없는 정상 샘플(= 원거리, 기본 놀이)입니다. 입력 오류·전송 중단은 안전 정지(H)로 갑니다.</p>
         </div>
+        </fieldset>
       </section>
 
       <section class="controls" aria-labelledby="render-title">
@@ -56,7 +121,7 @@
           <label><input type="checkbox" id="oil-toggle"> 유화 필터 (O)</label>
           <label><input type="checkbox" id="compare-toggle"> 원본 비교 (왼쪽 절반 원본)</label>
         </div>
-        <p class="hint">단축키: N 가까이 · M 중간 · F 멀리 · O 유화 · D 패널 표시 전환. 주소에 ?debug=1을 붙이면 패널이 열린 채 시작합니다.</p>
+        <p class="hint">단축키: O 유화 · D 패널 표시 전환(항상) · N 가까이 · M 중간 · F 멀리(모의 입력일 때만). 주소에 ?debug=1을 붙이면 패널이 열린 채 시작합니다.</p>
       </section>
 
       <details class="diagnostics" id="diagnostics" open>

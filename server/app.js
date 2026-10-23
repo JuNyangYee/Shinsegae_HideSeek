@@ -4,6 +4,7 @@
 //   - public/ 아래 정적 파일(숨김·상위 경로 차단).
 //   - /vendor/three/ 아래는 node_modules/three/build/의 고정 두 파일만(three.module.js, three.core.js). node_modules 전체는 제공하지 않는다.
 //   - /media/ 아래는 server/media.js의 고정 allowlist만(기본 public/display/assets/의 영상·정지 이미지, Range 지원).
+//   - /api/ 아래는 넘겨받은 센서 API만(server/sensor/api.js — 연결·SSE·설정). 넘겨받지 않으면 404.
 
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -88,14 +89,19 @@ async function fileInfo(filePath) {
 }
 
 // options: { mediaDirs: { seq, pose } } — 없으면 환경 변수·기본 경로(server/media.js).
-export function createHandler({ mediaDirs = resolveMediaDirs(), threeDir = THREE_BUILD_DIR } = {}) {
+//          sensorApi — /api/ 요청 처리(server/sensor/api.js). server.js가 만들어 넘긴다. 없으면 /api/는 404(이 모듈은 장치를 열지 않는다).
+export function createHandler({ mediaDirs = resolveMediaDirs(), threeDir = THREE_BUILD_DIR, sensorApi = null } = {}) {
   return async function handle(req, res) {
+    const { pathname } = new URL(req.url, 'http://127.0.0.1');
+    if (sensorApi !== null && pathname.startsWith('/api/')) {
+      await sensorApi.handle(req, res, pathname);
+      return;
+    }
+
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       sendText(res, req, 405, '허용하지 않는 요청 방식입니다.', { Allow: 'GET, HEAD' });
       return;
     }
-
-    const { pathname } = new URL(req.url, 'http://127.0.0.1');
     if (pathname === '/') {
       sendText(res, req, 302, `${ENTRY_PATH}로 이동합니다.`, { Location: ENTRY_PATH });
       return;

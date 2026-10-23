@@ -1,5 +1,6 @@
 // 모의 입력 조작부(개발용): 페이지 컨트롤과 단축키를 모의 입력 어댑터 호출로 바꾼다.
-// 판정·시퀀스 코어에는 DOM 이벤트를 넘기지 않는다. 유화(O)·패널(D) 키는 부르는 쪽 콜백으로 넘긴다.
+// 판정·시퀀스 코어에는 DOM 이벤트를 넘기지 않는다. 유화(O)·패널(D) 키는 부르는 쪽 콜백으로 넘긴다(입력 선택과 무관하게 동작).
+// 모의 조작(버튼·슬라이더·N/M/F)은 isActive()가 참일 때(패널에서 '모의 입력'을 고른 동안)만 동작한다 — 실센서 중에는 판정에 끼어들지 않는다.
 
 const MODE_LABELS = { ok: '정상 감지', 'no-target': '감지 없음', error: '입력 오류' };
 
@@ -9,7 +10,7 @@ function isEditingTarget(target) {
     && target.closest('input:not([type="checkbox"]), textarea, select, [contenteditable]:not([contenteditable="false"])') !== null;
 }
 
-export function bindMockControls(mock, settings, { root = document, onTogglePanel, onToggleOil } = {}) {
+export function bindMockControls(mock, settings, { root = document, onTogglePanel, onToggleOil, isActive = () => true } = {}) {
   const slider = root.getElementById('distance');
   const distanceOut = root.getElementById('distance-value');
   const modeOut = root.getElementById('input-mode');
@@ -49,11 +50,13 @@ export function bindMockControls(mock, settings, { root = document, onTogglePane
   };
 
   function run(action) {
+    if (!isActive()) return;
     actions[action]?.();
     refresh();
   }
 
   slider.addEventListener('input', () => {
+    if (!isActive()) return;
     mock.setDistance(slider.value);
     refresh();
   });
@@ -65,10 +68,11 @@ export function bindMockControls(mock, settings, { root = document, onTogglePane
     if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.isComposing || isEditingTarget(event.target)) return;
     // 한글 입력 상태에서도 같은 자리의 키로 동작하도록 물리 키(code)로 본다.
-    if (event.code === 'KeyN') run('near');
-    else if (event.code === 'KeyM') run('mid');
-    else if (event.code === 'KeyF') run('far');
-    else if (event.code === 'KeyO') onToggleOil?.();
+    const presets = { KeyN: 'near', KeyM: 'mid', KeyF: 'far' };
+    if (Object.hasOwn(presets, event.code)) {
+      if (!isActive()) return; // 실센서 중에는 N/M/F를 쓰지도 가로채지도 않는다
+      run(presets[event.code]);
+    } else if (event.code === 'KeyO') onToggleOil?.();
     else if (event.code === 'KeyD') onTogglePanel?.();
     else return;
     event.preventDefault();

@@ -70,6 +70,18 @@ export const SETTINGS = Object.freeze({
     staleMs: 1200, // 임시값: 마지막 정상 샘플 후 이만큼(ms) 새 샘플이 없으면 stale → unknown
     maxSampleGapMs: 300, // 임시값: 후보 유지 중 샘플 간격이 이보다(ms) 벌어지면 유지 시간을 새로 센다
   }),
+  // 실센서 입력 안정화(임시값, 2026-10-23): 판정 앞에서 단발 거리 튐·짧은 무감지(n=0)만 다룬다. 지속적인 잘못된 측정은 고치지 못한다.
+  // 개발 패널에서 바꾸면 로컬 서버의 .local/ 파일에 저장되고 이 값보다 우선한다(config/input-settings.js).
+  stabilize: Object.freeze({
+    medianWindow: 3, // 최근 감지 거리 N개의 중앙값(1이면 끔). 창이 다 찰 때까지는 판정에 보내지 않는다
+    absentGraceMs: 350, // 감지 중 n=0이 이 시간(ms) 안이면 직전 안정화 거리를 유지, 넘으면 감지 없음
+  }),
+  // 실센서 입력(ESP32 → 로컬 서버 → 같은 origin SSE). 서버가 시리얼을 읽는다(server/sensor/).
+  sensor: Object.freeze({
+    eventsUrl: '/api/sensor/events',
+    apiBase: '/api/sensor/',
+    source: 'mmwave',
+  }),
   sequence: Object.freeze({
     clips: CLIPS,
     playCycle: PLAY_CYCLE, // 원거리·감지 없음: 기본 놀이 A → B → C 순환
@@ -117,6 +129,7 @@ export const SETTINGS = Object.freeze({
     recoverRetryMs: 1000, // 실행 중 그리기 실패 후 다시 시험하는 간격(ms)
   }),
   mock: Object.freeze({
+    // 모의 입력(개발용). 개발 패널에서 '모의 입력'을 고른 동안에만 판정에 쓰인다(시작은 실센서).
     source: 'mock',
     sampleIntervalMs: 100, // 모의 샘플 발행 간격(ms)
     initialDistanceM: 1.6, // 시작 거리(m): 원거리

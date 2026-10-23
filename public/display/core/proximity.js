@@ -141,5 +141,10 @@ export function createProximityJudge(cfg) {
     };
   }
 
-  return { update, tick, snapshot };
+  // 입력 어댑터가 받았지만 쓸 수 없는 프레임(형식·범위 오류)을 알린다. 샘플 거절과 같다 — 진행 중 후보를 끊고 사유를 남긴다.
+  function rejectInput(reason, nowMs) {
+    return reject(reason, nowMs);
+  }
+
+  return { update, tick, snapshot, rejectInput };
 }

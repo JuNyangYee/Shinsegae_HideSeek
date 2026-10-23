@@ -12,6 +12,9 @@ npm-debug.log*
 tmp/
 .cache/
 
+# 로컬 서버가 저장하는 개발 패널 설정(앱 판정·센서 희망값·전송 기록)
+.local/
+
 # OS·편집기 부산물
 .DS_Store
 Thumbs.db

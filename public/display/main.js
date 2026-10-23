@@ -1,11 +1,15 @@
-// 표시 페이지 조립: 모의 입력 → 근접 판정 → 시퀀스 상태 → 영상 재생기 → 무대 렌더러(유화 후처리)·진단.
+// 표시 페이지 조립: 입력(실센서 SSE → 안정화 | 모의 입력) → 근접 판정 → 시퀀스 상태 → 영상 재생기 → 무대 렌더러(유화 후처리)·진단.
 // 판정·시퀀스 코어는 순수 모듈이고, DOM·타이머·영상·WebGL은 여기와 scene/ 모듈만 다룬다.
+// 판정 입력은 한 번에 하나만 쓴다(시작은 실센서, 개발 패널에서 모의 입력으로 바꿀 수 있음).
 
 import { SETTINGS } from './config/settings.js';
+import { defaultAppSettings, proximityConfigFrom } from './config/input-settings.js';
 import { createProximityJudge } from './core/proximity.js';
 import { clipPlayMs, createSequenceDirector } from './core/sequence.js';
 import { createMockInput } from './input/mock-input.js';
 import { bindMockControls } from './input/mock-controls.js';
+import { createSensorInput } from './input/sensor-input.js';
+import { bindSensorPanel } from './input/sensor-panel.js';
 import { createSeqPlayer } from './scene/seq-player.js';
 import { createDiagnostics } from './scene/diagnostics.js';
 
@@ -27,18 +31,23 @@ function setPanel(open) {
 }
 setPanel(query.get('debug') === '1');
 
-const { nearBelowM, farAboveM, retreatMarginM } = SETTINGS.proximity;
-document.getElementById('threshold-hint').textContent =
-  `근거리 < ${nearBelowM.toFixed(2)} m ≤ 중간 ≤ ${farAboveM.toFixed(2)} m < 원거리 (기획값) · 멀어질 때 +${retreatMarginM.toFixed(2)} m 여유(임시)`;
+function updateThresholdHint(app) {
+  const isPlan = app.nearBelowM === SETTINGS.proximity.nearBelowM && app.farAboveM === SETTINGS.proximity.farAboveM;
+  document.getElementById('threshold-hint').textContent =
+    `근거리 < ${app.nearBelowM.toFixed(2)} m ≤ 중간 ≤ ${app.farAboveM.toFixed(2)} m < 원거리 (${isPlan ? '기획값' : '패널 조정값'}) · 멀어질 때 +${app.retreatMarginM.toFixed(2)} m 여유(임시)`;
+}
 
 const midSubstitute = SETTINGS.sequence.clips.SC1b_Glance.file === null;
 const diagnostics = createDiagnostics(document.getElementById('diag-list'), {
   note: `${midSubstitute ? '중간 거리 대기: SC1b_Glance 영상 없음 → SC0A/B/C 놀이 순환으로 대체 · ' : ''}`
     + `SC1_Notice 원본 ${(SETTINGS.sequence.clips.SC1_Notice.durationMs / 1000).toFixed(2)} s · 편집 재생 ${(clipPlayMs(SETTINGS.sequence.clips.SC1_Notice) / 1000).toFixed(2)} s(v02 목표 3 s)`
-    + ` · 편집 구간은 임시값 · 모의 입력(실제 센서 아님)`,
+    + ' · 편집 구간은 임시값',
 });
 
-const judge = createProximityJudge(SETTINGS.proximity);
+// 앱 판정 설정(경계·유지 시간·안정화): 기본값으로 시작하고 로컬 서버의 저장값이 오면 바꾼다(core/proximity.js 규칙은 그대로).
+let appSettings = defaultAppSettings();
+let judge = createProximityJudge(proximityConfigFrom(appSettings));
+updateThresholdHint(appSettings);
 const director = createSequenceDirector(SETTINGS.sequence);
 let stageRenderer = null; // 아래에서 만든다(재생기의 표시 변경 알림이 참조하므로 먼저 선언)
 
@@ -160,27 +169,110 @@ if (stageRenderer !== null) {
 document.addEventListener('visibilitychange', () => setSuspendReason('탭 숨김', document.hidden));
 setSuspendReason('탭 숨김', document.hidden);
 
-const mock = createMockInput({
-  ...SETTINGS.mock,
+// ── 판정 입력 선택(실센서 | 모의). 입력을 바꾸거나 앱 판정 설정을 바꾸면 판정기·안정화를 새로 만든다 ──
+// 이전 입력의 거리·판정 후보가 섞이지 않게 unknown(안전 정지)에서 다시 판정한다(회복은 기존 유지 시간 규칙대로).
+let inputMode = 'sensor';
+const mockFieldset = document.getElementById('mock-fieldset');
+const panelBadge = document.getElementById('panel-badge');
+const mockStateEl = document.getElementById('mock-state');
+
+function resetJudge() {
+  const t = now();
+  const before = judge.snapshot(t).decision;
+  judge = createProximityJudge(proximityConfigFrom(appSettings));
+  if (before !== 'unknown') apply(director.setDecision('unknown', t));
+}
+
+// 고른 입력의 샘플만 판정에 넣는다(숨겨진 모의 조작·다른 입력이 끼어들지 않게).
+function feed(source, sample) {
+  if (source !== inputMode) return;
+  const t = now();
+  onJudgement(judge.update(sample, t), t);
+}
+
+const mock = createMockInput({ ...SETTINGS.mock, now, onSample: (sample) => feed('mock', sample) });
+
+const sensor = createSensorInput({
+  eventsUrl: SETTINGS.sensor.eventsUrl,
+  source: SETTINGS.sensor.source,
+  maxGapMs: SETTINGS.proximity.maxSampleGapMs,
   now,
-  onSample: (sample) => {
-    const t = now();
-    onJudgement(judge.update(sample, t), t);
+  onSample: (sample) => feed('sensor', sample),
+  onReject: (reason, t) => {
+    if (inputMode === 'sensor') judge.rejectInput(reason, t);
+  },
+  onState: (state) => {
+    if (state?.settings?.app) applyAppSettings(state.settings.app);
+    if (!panel.hidden) sensorPanel.render(sensor.snapshot(now()));
   },
 });
+sensor.configure(appSettings);
+
+// 로컬 서버에 저장된(또는 방금 저장한) 앱 판정 설정을 적용한다. 같은 값이면 아무것도 하지 않는다.
+function applyAppSettings(next) {
+  if (JSON.stringify(next) === JSON.stringify(appSettings)) return;
+  appSettings = { ...next };
+  updateThresholdHint(appSettings);
+  sensor.configure(appSettings);
+  resetJudge();
+}
+
+function setInputMode(mode) {
+  if ((mode !== 'sensor' && mode !== 'mock') || mode === inputMode) return;
+  inputMode = mode;
+  if (mode === 'sensor') mock.stop();
+  sensor.setActive(mode === 'sensor');
+  resetJudge();
+  if (mode === 'mock') mock.start();
+  updateInputUi();
+}
 
 const controls = bindMockControls(mock, SETTINGS.mock, {
   onTogglePanel: () => setPanel(panel.hidden),
   onToggleOil: () => setOil(!(stageRenderer?.oil ?? false)),
+  isActive: () => inputMode === 'mock',
 });
+
+const sensorPanel = bindSensorPanel({
+  apiBase: SETTINGS.sensor.apiBase,
+  staleMs: SETTINGS.proximity.staleMs,
+  getInputMode: () => inputMode,
+  setInputMode,
+  onAppSettingsSaved: applyAppSettings,
+});
+
+function updateInputUi() {
+  const isMock = inputMode === 'mock';
+  mockFieldset.disabled = !isMock;
+  panelBadge.textContent = isMock
+    ? '개발 패널 — 판정 입력: 모의 입력(개발용, 실제 센서 아님)'
+    : '개발 패널 — 판정 입력: 실센서(mmWave, 로컬 서버가 직접 읽음)';
+  mockStateEl.textContent = isMock ? '판정에 사용 중' : '실센서 선택 중 — 사용 안 함';
+  controls.refresh();
+}
+
+const CONN_TEXT = { idle: '연결 안 됨', opening: '여는 중', open: '연결됨', 'retry-wait': '재연결 대기' };
+function describeInput(sensorSnap) {
+  if (inputMode === 'mock') {
+    const m = mock.getState();
+    return `모의 입력(개발용, 실제 센서 아님) · ${m.sending ? '전송 중' : '전송 중단'} · 보낸 샘플 ${m.sentCount}`;
+  }
+  const link = sensorSnap.state?.link;
+  const c = sensorSnap.counts;
+  return `실센서 ${SETTINGS.sensor.source} · ${sensorSnap.sseOpen ? '서버 이벤트 연결' : '서버 이벤트 끊김'}`
+    + ` · ${link ? `${CONN_TEXT[link.conn] ?? link.conn}${link.selected ? ` ${link.selected}` : ''}` : '상태 없음'}`
+    + ` · 받은 프레임 ${c.frames} · 판정에 보낸 샘플 ${c.sent} · 오류 ${c.errors} · 거절 ${c.rejected}`;
+}
 
 function tick() {
   const t = now();
   onJudgement(judge.tick(t), t); // 샘플이 끊기면 stale → unknown
   apply(director.tick(t)); // 재생 timeout, 재생 오류 후 재시도(apply가 화면 메시지도 갱신 — 안전 이미지 재시도 상태 반영)
   if (panel.hidden) return;
+  const sensorSnap = sensor.snapshot(t);
+  sensorPanel.render(sensorSnap);
   diagnostics.render({
-    input: mock.getState(),
+    input: { text: describeInput(sensorSnap) },
     judge: judge.snapshot(t),
     seq: director.snapshot(),
     player: player.snapshot(t),
@@ -193,8 +285,9 @@ function tick() {
 player.setPose('hidden');
 player.preload();
 apply([]);
-mock.start();
-controls.refresh(); // 전송 시작 후 조작부 표시를 실제 상태에 맞춘다
+sensor.setActive(true); // 시작은 실센서
+sensor.start();
+updateInputUi();
 tick();
 setInterval(tick, SETTINGS.display.tickMs);
 
@@ -202,6 +295,7 @@ setInterval(tick, SETTINGS.display.tickMs);
 window.addEventListener('pagehide', (event) => {
   if (event.persisted) return;
   mock.stop();
+  sensor.stop();
   stageRenderer?.dispose();
   player.dispose();
 });

@@ -20,7 +20,7 @@ const sec = (v) => (v === null || v === undefined ? '-' : v.toFixed(2));
 const STAGE_LABELS = { pending: '대기', loading: '불러오는 중', seeking: '처음으로 탐색', starting: '재생 시작 중', playing: '재생 중' };
 
 const ROWS = [
-  ['input', '입력 원본'],
+  ['input', '판정 입력'],
   ['sample', '마지막 샘플'],
   ['age', '마지막 샘플 경과'],
   ['decision', '근접 판정'],
@@ -121,7 +121,7 @@ export function createDiagnostics(listEl, { note = '' } = {}) {
   cells.note.textContent = note;
 
   function render({ input, judge, seq, player, render: r, suspendedBy, nowMs }) {
-    cells.input.textContent = `${input.source} · ${input.sending ? '전송 중' : '전송 중단'} · 보낸 샘플 ${input.sentCount}`;
+    cells.input.textContent = input.text; // 고른 판정 입력(실센서 / 모의)과 수신 요약 — main.js가 만든다
     cells.sample.textContent = formatSample(judge.lastSample);
     cells.age.textContent = judge.lastSampleAgeMs === null
       ? '-'
