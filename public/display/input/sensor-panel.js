@@ -112,8 +112,8 @@ export function bindSensorPanel({ root = document, apiBase, staleMs, getInputMod
     const mode = getInputMode();
     for (const button of sourceButtons) button.setAttribute('aria-pressed', String(button.dataset.source === mode));
     sourceHint.textContent = mode === 'sensor'
-      ? '판정 입력: 실센서. 모의 조작(버튼·N/M/F)은 쓰지 않습니다.'
-      : '판정 입력: 모의 입력(개발용, 실제 센서 아님). 센서 상태는 표시만 합니다.';
+      ? '판정 입력: 실센서. 모의 조작(버튼·N/M/F)은 쓰지 않습니다. 숫자 1/2/3을 누르면 모의 입력으로 바뀝니다.'
+      : '판정 입력: 모의 입력(개발용, 실제 센서 아님). 센서 상태는 표시만 합니다. 실센서로 돌아가려면 위 실센서 버튼을 누르세요.';
   }
 
   // ── 포트 ──

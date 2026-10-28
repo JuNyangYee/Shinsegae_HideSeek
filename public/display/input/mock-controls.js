@@ -1,6 +1,7 @@
 // 모의 입력 조작부(개발용): 페이지 컨트롤과 단축키를 모의 입력 어댑터 호출로 바꾼다.
 // 판정·시퀀스 코어에는 DOM 이벤트를 넘기지 않는다. 유화(O)·패널(D) 키는 부르는 쪽 콜백으로 넘긴다(입력 선택과 무관하게 동작).
 // 모의 조작(버튼·슬라이더·N/M/F)은 isActive()가 참일 때(패널에서 '모의 입력'을 고른 동안)만 동작한다 — 실센서 중에는 판정에 끼어들지 않는다.
+// 숫자 1/2/3(센서 없이 거리 시험)은 예외: 실센서 중이어도 프리셋 거리를 먼저 정한 뒤 activate()로 모의 입력으로 바꾸고 정상 전송을 이어 간다.
 
 const MODE_LABELS = { ok: '정상 감지', 'no-target': '감지 없음', error: '입력 오류' };
 
@@ -10,7 +11,14 @@ function isEditingTarget(target) {
     && target.closest('input:not([type="checkbox"]), textarea, select, [contenteditable]:not([contenteditable="false"])') !== null;
 }
 
-export function bindMockControls(mock, settings, { root = document, onTogglePanel, onToggleOil, isActive = () => true } = {}) {
+// 숫자 키 → 거리 프리셋. 위 숫자 줄과 숫자패드(NumLock 켬 — 꺼져 있으면 key가 숫자가 아니라 무시)를 같이 본다.
+const DIGIT_PRESETS = {
+  Digit1: 'near', Numpad1: 'near',
+  Digit2: 'mid', Numpad2: 'mid',
+  Digit3: 'far', Numpad3: 'far',
+};
+
+export function bindMockControls(mock, settings, { root = document, onTogglePanel, onToggleOil, isActive = () => true, activate } = {}) {
   const slider = root.getElementById('distance');
   const distanceOut = root.getElementById('distance-value');
   const modeOut = root.getElementById('input-mode');
@@ -55,6 +63,16 @@ export function bindMockControls(mock, settings, { root = document, onTogglePane
     refresh();
   }
 
+  // 숫자 키 프리셋: 거리·정상 감지를 먼저 정하고(전환 직후 첫 샘플이 이전 거리·오류가 되지 않게) 실센서 중이면 모의 입력으로 바꾼다.
+  // 이미 모의 입력이면 입력을 다시 초기화하지 않고(키마다 안전 정지로 튀지 않게) 전송 중단이었으면 전송만 다시 시작한다.
+  function selectPreset(action) {
+    if (!isActive() && !activate) return;
+    actions[action]();
+    if (!isActive()) activate();
+    if (isActive()) mock.start();
+    refresh();
+  }
+
   slider.addEventListener('input', () => {
     if (!isActive()) return;
     mock.setDistance(slider.value);
@@ -72,6 +90,9 @@ export function bindMockControls(mock, settings, { root = document, onTogglePane
     if (Object.hasOwn(presets, event.code)) {
       if (!isActive()) return; // 실센서 중에는 N/M/F를 쓰지도 가로채지도 않는다
       run(presets[event.code]);
+    } else if (Object.hasOwn(DIGIT_PRESETS, event.code)) {
+      if (event.shiftKey || !/^[0-9]$/.test(event.key)) return; // Shift 조합·NumLock 꺼진 숫자패드는 가로채지 않는다
+      selectPreset(DIGIT_PRESETS[event.code]);
     } else if (event.code === 'KeyO') onToggleOil?.();
     else if (event.code === 'KeyD') onTogglePanel?.();
     else return;

@@ -231,6 +231,7 @@ const controls = bindMockControls(mock, SETTINGS.mock, {
   onTogglePanel: () => setPanel(panel.hidden),
   onToggleOil: () => setOil(!(stageRenderer?.oil ?? false)),
   isActive: () => inputMode === 'mock',
+  activate: () => setInputMode('mock'), // 숫자 1/2/3: 센서 없이 거리 시험(센서 연결·설정은 그대로, 실센서 복귀는 패널 버튼)
 });
 
 const sensorPanel = bindSensorPanel({

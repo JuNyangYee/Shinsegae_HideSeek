@@ -96,10 +96,11 @@
           <label for="distance">관객 거리 <output id="distance-value" for="distance">-</output></label>
           <input type="range" id="distance">
           <div class="buttons">
-            <button type="button" data-action="near">가까이 (N)</button>
-            <button type="button" data-action="mid">중간 (M)</button>
-            <button type="button" data-action="far">멀리 (F)</button>
+            <button type="button" data-action="near">가까이 (N·1)</button>
+            <button type="button" data-action="mid">중간 (M·2)</button>
+            <button type="button" data-action="far">멀리 (F·3)</button>
           </div>
+          <p class="hint">숫자 1/2/3은 실센서 중에도 모의 입력으로 바꿔 0.4/0.9/1.6 m 고정 거리를 정상 감지로 보냅니다(센서 연결·설정은 그대로, 패널이 닫혀 있어도 동작). 기본 경계에서 가까이/중간/멀리이며, 경계를 바꾸면 판정이 달라질 수 있습니다.</p>
         </div>
 
         <div class="field">
@@ -121,7 +122,7 @@
           <label><input type="checkbox" id="oil-toggle"> 유화 필터 (O)</label>
           <label><input type="checkbox" id="compare-toggle"> 원본 비교 (왼쪽 절반 원본)</label>
         </div>
-        <p class="hint">단축키: O 유화 · D 패널 표시 전환(항상) · N 가까이 · M 중간 · F 멀리(모의 입력일 때만). 주소에 ?debug=1을 붙이면 패널이 열린 채 시작합니다.</p>
+        <p class="hint">단축키: O 유화 · D 패널 표시 전환(항상) · 1 가까이 · 2 중간 · 3 멀리(항상 — 실센서 중이면 모의 입력으로 전환) · N 가까이 · M 중간 · F 멀리(모의 입력일 때만). 주소에 ?debug=1을 붙이면 패널이 열린 채 시작합니다.</p>
       </section>
 
       <details class="diagnostics" id="diagnostics" open>

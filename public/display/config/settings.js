@@ -129,13 +129,13 @@ export const SETTINGS = Object.freeze({
     recoverRetryMs: 1000, // 실행 중 그리기 실패 후 다시 시험하는 간격(ms)
   }),
   mock: Object.freeze({
-    // 모의 입력(개발용). 개발 패널에서 '모의 입력'을 고른 동안에만 판정에 쓰인다(시작은 실센서).
+    // 모의 입력(개발용). 개발 패널에서 '모의 입력'을 고르거나 숫자 1/2/3을 누른 뒤에만 판정에 쓰인다(시작은 실센서).
     source: 'mock',
     sampleIntervalMs: 100, // 모의 샘플 발행 간격(ms)
     initialDistanceM: 1.6, // 시작 거리(m): 원거리
-    nearPresetM: 0.4, // "가까이"·N 키
-    midPresetM: 0.9, // "중간"·M 키
-    farPresetM: 1.6, // "멀리"·F 키
+    nearPresetM: 0.4, // "가까이"·N·1 키
+    midPresetM: 0.9, // "중간"·M·2 키
+    farPresetM: 1.6, // "멀리"·F·3 키
     minDistanceM: 0,
     maxDistanceM: 3,
     stepM: 0.05,
