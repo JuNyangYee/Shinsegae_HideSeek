@@ -52,8 +52,16 @@
 - 실센서 모드에서 숨기 경계 입력칸에 초점을 두고 `1`: 값만 0.6→0.61로 편집됐으며 입력 모드·모의 거리는 바뀌지 않았다. 입력값은 0.6으로 되돌렸고 적용/저장은 하지 않았다.
 - 남은 미검증: 실제 숫자패드 NumLock 켬/끔, 한글 IME 조합 상태, 비기본 자판, 모든 조합키·반복키의 실제 입력. 해당 보호 분기는 코드로만 확인했다. 센서·현장 거리 정확도는 이번 변경 범위 밖이다.
 
-## 인계
+## 구현 직후 인계
 
 - 브랜치: `task-keyboard-distance-presets`(지시문의 `task/keyboard-distance-presets`와 달리 실제 이름은 하이픈), worktree `C:/Users/User/.paseo/worktrees/0wbs9g4q/task-keyboard-distance-presets`, 기준 `master` `fbf7360`.
 - 커밋: 하지 않음(오케스트레이터가 커밋·검수·병합·push 담당). 변경은 작업 트리에만 있음. 미병합.
 - 남은 이슈: 위 미검증 항목. 숫자 줄이 숫자를 내지 않는 자판의 제한은 구현 선택을 참고한다. 최종 병합·배포 결과는 아래에 보완한다.
+
+## 최종 통합·로컬 배포
+
+- 구현 커밋 `2bda4c97cb216009a5a778bcab464a249ee8a678`을 clean 상태의 통합 checkout `D:/2026-09_ShinsegaeChristmas/006_Works/001_HideSeek` / `master`에 `--ff-only`로 병합했다. `origin/master`에 `fbf7360 → 2bda4c9` push 성공을 확인했다.
+- 배포 범위는 기존 로컬 PC 앱의 master 반영과 8091 서버 실행이다. 서버가 꺼져 있음을 확인한 뒤 해당 checkout에서 실행했다(PID 50156, 숨김 창). 의존성 변경이 없고 기존 three·serialport 설치를 확인해 npm ci는 반복하지 않았다.
+- 운영 주소 `http://127.0.0.1:8091/display/`에서 숫자 `3`을 눌러 모의 입력·1.60 m·정상 전송·패널 숨김을 확인했다. API 200, 센서는 연결 없음(idle/port null), 서버 stderr 없음. 기존 저장 경계 0.6/1.15 m는 그대로 유지했다(설정 파일을 변경하지 않음).
+- 8092 임시 QA 서버는 종료하고 운영 8091 서버와 표시 탭만 남긴다. 원본 영상·필터·센서 명령·펌웨어를 변경하지 않았다.
+- 이 기록은 구현 커밋의 push와 로컬 실행 확인 뒤 작성했다. 기록 자체는 별도 문서 커밋으로 fast-forward 통합·push한다. 작업 브랜치·worktree는 보존한다.
